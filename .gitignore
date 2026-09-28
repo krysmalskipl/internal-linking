@@ -1,0 +1,15 @@
+# środowisko
+.venv/
+__pycache__/
+.env
+
+# lokalna konfiguracja Claude Code (zawiera domenę klienta)
+.claude/
+
+# dane i wyniki - crawl, odpowiedzi Jev, rekomendacje, próbki, oceny
+data/
+*.csv
+*.jsonl
+
+# macOS
+.DS_Store
