@@ -1,6 +1,6 @@
 """Krok 3: recommendations.csv → sample_to_label.csv
 
-Losuje pary źródło → cel po równo z 5 kwantyli prawdopodobieństwa, żeby próbka miała
+Losuje pary źródło → cel (jeszcze nieobecne w próbce) po równo z 5 kwantyli prawdopodobieństwa, żeby próbka miała
 przykłady pewne i niepewne niezależnie od tego, jak rozkładają się wyniki Jev.
 Wypełnij kolumnę `ok` (1 = dobry link, 0 = zły) i zapisz plik.
 
@@ -24,10 +24,13 @@ def main() -> None:
 
     ddir = data_dir(args.domain)
     out = ddir / "sample_to_label.csv"
-    if out.exists() and any(r.get("ok", "").strip() for r in read_csv(out)):
-        raise SystemExit(f"{out} ma już oceny - nie nadpisuję. Usuń plik, jeśli chcesz nową próbkę.")
+    # istniejące oceny zostają; losujemy tylko spośród par, których jeszcze nie ma w próbce
+    existing = read_csv(out) if out.exists() else []
+    seen = {(r["source_url"], r["target_url"]) for r in existing}
 
-    rows = read_csv(ddir / "recommendations.csv")
+    rows = [r for r in read_csv(ddir / "recommendations.csv") if (r["source_url"], r["target_url"]) not in seen]
+    if not rows:
+        raise SystemExit("Wszystkie aktualne rekomendacje są już w próbce.")
     rng = random.Random(args.seed)
     rows.sort(key=lambda r: float(r["probability"]))
     buckets = [rows[len(rows) * k // N_BINS: len(rows) * (k + 1) // N_BINS] for k in range(N_BINS)]
@@ -45,8 +48,8 @@ def main() -> None:
 
     for r in picked:
         r["ok"] = ""
-    write_csv(out, picked, FIELDS)
-    print(f"{len(picked)} par → {out}\nprzedziały kwantylowe prawdopodobieństwa: {', '.join(ranges)}")
+    write_csv(out, existing + picked, FIELDS)
+    print(f"{len(picked)} nowych par (razem {len(existing) + len(picked)}) → {out}\nprzedziały kwantylowe prawdopodobieństwa: {', '.join(ranges)}")
     print("Wpisz w kolumnie `ok` 1 (dobry link) lub 0 (zły) i uruchom calibrate.py.")
 
 

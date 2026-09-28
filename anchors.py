@@ -6,8 +6,8 @@ co najmniej 4 i po nim najwyżej 3 litery końcówki, więc
 
 - exact:   fraza pokrywa wszystkie słowa kluczowe celu (z tytułu, h1 albo sluga)
 - partial: fraza zawiera co najmniej 2 słowa celu, w tym jedno charakterystyczne
-Pojedyncze słowo wystarcza tylko, gdy nazwa celu jest jednym słowem z co najmniej 5 liter
-(np. "usług" → Usługi, ale nie "mnie" → O mnie).
+Pojedyncze słowa ("usług", "kontakt") nie są anchorami. Tekst istniejących linków jest w treści
+zastąpiony separatorem (crawl.py → text_free), więc fraza nigdy go nie obejmuje.
 """
 import re
 import unicodedata
@@ -16,8 +16,10 @@ from urllib.parse import urlsplit
 
 STOPWORDS = set("""a aby ale bez by być co czy dla do i ich jak jaki jest jej jego już
 ku lub ma może na nad nie o od oraz po pod przez przy się są ta tak te to tu w we z za ze
-że czym jakie która który które twoja twojej twoje moje mój""".split())
+że czym jakie która który które twoja twojej twoje moje mój dlaczego warto nadal mam kiedy
+gdzie ile jaka jakich twój czyli bardzo można""".split())
 MAX_WORDS = 6
+COMMON_SHARE = 0.8
 SENTENCE_END = (".", "!", "?", ";", ":", "…")
 PUNCT = ".,;:!?()[]\"'„”«»…"
 
@@ -49,11 +51,12 @@ def same_word(a: str, b: str) -> bool:
 
 class AnchorFinder:
     def __init__(self, pages: list[dict]):
-        # słowa (po 5 literach) obecne na ponad połowie stron nie wyróżniają żadnego celu
+        # słowa (po 5 literach) obecne prawie na każdej stronie (nazwa serwisu, podpis autora)
+        # nie wyróżniają żadnego celu; słowa kluczowe usług bywają na połowie stron i muszą zostać
         c = Counter()
         for p in pages:
             c.update({fold(w)[:5] for w in words(p["text"])})
-        self.common = {s for s, n in c.items() if n > 0.5 * len(pages)}
+        self.common = {s for s, n in c.items() if n > COMMON_SHARE * len(pages)}
 
     def find(self, src_text: str, src_title: str, target_title: str, target_h1: str,
              target_url: str) -> tuple[str, str] | None:
@@ -74,7 +77,6 @@ class AnchorFinder:
         distinctive = {k for k, v in enumerate(vocab) if v[:5] not in self.common}
         if not distinctive:
             return None
-        single_word_targets = {next(iter(k)) for k in keyphrases if len(k) == 1 and len(vocab[next(iter(k))]) >= 5}
         own = content_words(src_title)
 
         def match(word: str) -> int | None:
@@ -97,7 +99,7 @@ class AnchorFinder:
                     if k is None:
                         break  # każde słowo treściowe frazy musi pochodzić z celu
                     hits.add(k)
-                    enough = len(hits) >= 2 or hits <= single_word_targets
+                    enough = len(hits) >= 2
                     # fraza opisująca samą stronę źródłową (np. "rower" na stronie o rowerach
                     # elektrycznych) prowadziłaby do kanibalizacji - pomijamy
                     about_source = all(any(same_word(vocab[h], o) for o in own) for h in hits)

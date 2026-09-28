@@ -17,6 +17,7 @@ from common import data_dir, is_internal, norm_url, write_jsonl
 
 UA = "Mozilla/5.0 (compatible; internal-linking-audit/1.0)"
 NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+LINK_MARK = "¶"  # miejsce istniejącego linku w text_free
 BOILERPLATE = ["script", "style", "noscript", "nav", "header", "footer", "aside", "form", "iframe", "svg"]
 
 session = requests.Session()
@@ -122,6 +123,11 @@ def extract(url: str, html: str, domain: str) -> dict:
     for tag in content.find_all(BOILERPLATE):
         tag.decompose()
     content_links = internal_links(content, url, domain)
+    text = " ".join(content.get_text(" ", strip=True).split())
+    # tekst istniejących linków zastępujemy separatorem, żeby nie proponować go jako nowego anchora
+    for a in content.find_all("a"):
+        a.replace_with(f" {LINK_MARK} ")
+    text_free = " ".join(content.get_text(" ", strip=True).split())
 
     return {
         "url": url,
@@ -130,7 +136,8 @@ def extract(url: str, html: str, domain: str) -> dict:
         "meta": meta(soup, "description"),
         "robots": meta(soup, "robots").lower(),
         "canonical": urljoin(url, canonical["href"]) if canonical and canonical.get("href") else url,
-        "text": " ".join(content.get_text(" ", strip=True).split()),
+        "text": text,
+        "text_free": text_free,
         "content_links": sorted(content_links),
         "breadcrumb_links": sorted(breadcrumb_links),
         "other_links": sorted(all_links - content_links),

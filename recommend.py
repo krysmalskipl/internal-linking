@@ -30,7 +30,8 @@ MAX_TEXT_CHARS = 15000
 TOKEN_BUDGET = 30000       # limit Jev to 32k - zostawiamy zapas
 CHARS_PER_TOKEN = 3        # ostrożny szacunek dla polskiego tekstu
 NONE_KEY = "brak"
-TOP_N = 3
+TOP_N = 10                 # maks. liczba propozycji z jednej strony (każda ma frazę w tekście)
+TEMPLATE_SHARE = 0.3       # udział stron, powyżej którego powtarzana fraza uznawana jest za szablon
 
 INSTRUCTIONS = (
     "Jesteś redaktorem SEO. Na podstawie treści strony źródłowej wybierz stronę z listy, "
@@ -147,14 +148,31 @@ def main() -> None:
     if args.limit:
         sources = sources[: args.limit]
 
+    def find(text: str, src_title: str, t: dict):
+        return finder.find(text, src_title, clean_title(t["title"], suffixes), t["h1"], t["url"])
+
     anchors = {}  # (źródło, cel) -> (fraza, exact/partial)
+    reserved = 0
     for i in sources:
         src_title = clean_title(pages[i]["title"], suffixes)
+        text = pages[i].get("text_free", pages[i]["text"])
         for j, t in enumerate(pages):
-            if j != i:
-                found = finder.find(pages[i]["text"], src_title, clean_title(t["title"], suffixes), t["h1"], t["url"])
-                if found:
-                    anchors[(i, j)] = found
+            if j != i and (found := find(text, src_title, t)):
+                anchors[(i, j)] = found
+    # ta sama fraza do tego samego celu na wielu stronach to element szablonu (podpis autora,
+    # stopka wpisu), a nie treść - nie nadaje się na link
+    repeats = Counter((phrase.lower(), j) for (i, j), (phrase, _) in anchors.items())
+    limit = max(3, TEMPLATE_SHARE * len(sources))
+    template = [key for key, (phrase, _) in anchors.items() if repeats[(phrase.lower(), key[1])] > limit]
+    for key in template:
+        del anchors[key]
+    print(f"odrzucone frazy z szablonu (ta sama fraza → ten sam cel na > {limit:.0f} stronach): {len(template)}")
+    # fraza, która jest dokładną nazwą innej strony, jest zarezerwowana dla tamtej strony
+    for (i, j), (phrase, kind) in list(anchors.items()):
+        if kind == "partial" and any(k != j and (m := find(phrase, "", t)) and m[1] == "exact"
+                                     for k, t in enumerate(pages)):
+            del anchors[(i, j)]
+            reserved += 1
     print(f"stron: {len(pages)}, źródeł (≥ {args.min_words} słów): {len(sources)}")
 
     cache_path = ddir / "jev_raw.jsonl"
@@ -169,6 +187,7 @@ def main() -> None:
                                                   [anchors[(i, j)][0] for j in cand])
         tokens = len(json.dumps({"state": state, "questions": questions}, ensure_ascii=False)) // CHARS_PER_TOKEN
         jobs.append((pages[i], state, questions, targets, cache_key(pages[i], targets), tokens))
+    print(f"odrzucone frazy zarezerwowane dla innej strony (exact): {reserved}")
     print(f"stron z co najmniej jednym celem z frazą w tekście: {len(jobs)} (bez żadnego: {skipped}), "
           f"par do oceny: {sum(len(j[3]) for j in jobs)}")
     if not jobs:

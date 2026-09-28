@@ -27,8 +27,15 @@ def main() -> None:
                if r["ok"].strip().lower() in YES | NO]
     if not labeled:
         raise SystemExit("Brak ocen w kolumnie `ok` (1/0).")
-    pairs = [(float(r["probability"]), r["ok"].strip().lower() in YES) for r in labeled]
-    print(f"ocenionych par: {len(pairs)}, dobrych: {sum(ok for _, ok in pairs)}\n")
+    labels = {(r["source_url"], r["target_url"]): r["ok"].strip().lower() in YES for r in labeled}
+    rows = read_csv(ddir / "recommendations.csv")
+    # oceny liczą się tylko dla par wciąż obecnych w rekomendacjach, z ich aktualnym prawdopodobieństwem
+    pairs = [(float(r["probability"]), labels[(r["source_url"], r["target_url"])]) for r in rows
+             if (r["source_url"], r["target_url"]) in labels]
+    if not pairs:
+        raise SystemExit("Żadna oceniona para nie występuje w aktualnych rekomendacjach.")
+    print(f"ocenionych par w aktualnych rekomendacjach: {len(pairs)} (z {len(labeled)} ocenionych), "
+          f"dobrych: {sum(ok for _, ok in pairs)}\n")
 
     print("  próg  precyzja  pokrycie  par")
     chosen = None
@@ -47,8 +54,6 @@ def main() -> None:
     else:
         print(f"\nwybrany próg: {chosen:.3f}")
 
-    labels = {(r["source_url"], r["target_url"]): r["ok"].strip().lower() in YES for r in labeled}
-    rows = read_csv(ddir / "recommendations.csv")
     for r in rows:
         key = (r["source_url"], r["target_url"])
         if key in labels:

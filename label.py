@@ -123,7 +123,7 @@ def main() -> None:
     ddir = data_dir(args.domain)
     path = ddir / "sample_to_label.csv"
     rows = read_csv(path)
-    texts = {p["url"]: p["text"] for p in read_jsonl(ddir / "pages.jsonl")}
+    texts = {p["url"]: p.get("text_free", p["text"]).replace(" ¶ ", " ") for p in read_jsonl(ddir / "pages.jsonl")}
     items = [{**r, "snippet": snippet(texts.get(r["source_url"], ""), r.get("anchor", ""))} for r in rows]
 
     class Handler(BaseHTTPRequestHandler):
