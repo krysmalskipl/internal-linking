@@ -1,0 +1,9 @@
+{
+  "score_min": 0.9,
+  "kontekst_min": 0.5,
+  "anchor_min": 0.5,
+  "kanibalizacja_max": 0.7,
+  "max_links_per_page": 3,
+  "min_words": 150,
+  "template_share": 0.3
+}
