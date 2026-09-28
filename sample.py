@@ -1,8 +1,8 @@
-"""Krok 3: recommendations.csv → sample_to_label.csv
+"""Opcjonalnie (kontrola jakości): recommendations.csv z run.py → sample_to_label.csv
 
-Losuje pary źródło → cel (jeszcze nieobecne w próbce) po równo z 5 kwantyli prawdopodobieństwa, żeby próbka miała
+Losuje pary źródło → cel (jeszcze nieobecne w próbce) po równo z 5 kwantyli oceny Jev (score), żeby próbka miała
 przykłady pewne i niepewne niezależnie od tego, jak rozkładają się wyniki Jev.
-Wypełnij kolumnę `ok` (1 = dobry link, 0 = zły) i zapisz plik.
+Oceń je w label.py albo wpisz w kolumnie `ok` 1 (dobry link) / 0 (zły); potem evaluate.py.
 
   python sample.py --domain example.com --n 40
 """
@@ -12,7 +12,8 @@ import random
 from common import data_dir, read_csv, write_csv
 
 N_BINS = 5
-FIELDS = ["ok", "probability", "source_title", "target_title", "anchor", "anchor_type", "in_menu", "source_url", "target_url", "rank"]
+FIELDS = ["ok", "score", "source_title", "target_title", "anchor", "anchor_type", "miejsce", "kontekst",
+          "in_menu", "source_url", "target_url"]
 
 
 def main() -> None:
@@ -32,9 +33,9 @@ def main() -> None:
     if not rows:
         raise SystemExit("Wszystkie aktualne rekomendacje są już w próbce.")
     rng = random.Random(args.seed)
-    rows.sort(key=lambda r: float(r["probability"]))
+    rows.sort(key=lambda r: float(r["score"] or 0))
     buckets = [rows[len(rows) * k // N_BINS: len(rows) * (k + 1) // N_BINS] for k in range(N_BINS)]
-    ranges = [f"{float(b[0]['probability']):.2f}-{float(b[-1]['probability']):.2f}" for b in buckets if b]
+    ranges = [f"{float(b[0]['score'] or 0):.2f}-{float(b[-1]['score'] or 0):.2f}" for b in buckets if b]
     for b in buckets:
         rng.shuffle(b)
 
@@ -44,13 +45,13 @@ def main() -> None:
         for b in buckets:
             if b and len(picked) < args.n:
                 picked.append(b.pop())
-    picked.sort(key=lambda r: -float(r["probability"]))
+    picked.sort(key=lambda r: -float(r["score"] or 0))
 
     for r in picked:
         r["ok"] = ""
     write_csv(out, existing + picked, FIELDS)
-    print(f"{len(picked)} nowych par (razem {len(existing) + len(picked)}) → {out}\nprzedziały kwantylowe prawdopodobieństwa: {', '.join(ranges)}")
-    print("Wpisz w kolumnie `ok` 1 (dobry link) lub 0 (zły) i uruchom calibrate.py.")
+    print(f"{len(picked)} nowych par (razem {len(existing) + len(picked)}) → {out}\nprzedziały kwantylowe oceny: {', '.join(ranges)}")
+    print("Oceń pary (label.py) i uruchom evaluate.py.")
 
 
 if __name__ == "__main__":

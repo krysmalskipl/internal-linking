@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from common import data_dir, read_csv, read_jsonl, write_csv
 
-FIELDS = ["ok", "probability", "source_title", "target_title", "anchor", "anchor_type", "in_menu",
+FIELDS = ["ok", "score", "source_title", "target_title", "anchor", "anchor_type", "in_menu",
           "source_url", "target_url", "rank"]
 
 PAGE = """<!doctype html>
@@ -123,8 +123,11 @@ def main() -> None:
     ddir = data_dir(args.domain)
     path = ddir / "sample_to_label.csv"
     rows = read_csv(path)
-    texts = {p["url"]: p.get("text_free", p["text"]).replace(" ¶ ", " ") for p in read_jsonl(ddir / "pages.jsonl")}
-    items = [{**r, "snippet": snippet(texts.get(r["source_url"], ""), r.get("anchor", ""))} for r in rows]
+    fields = list(rows[0].keys()) if rows else FIELDS
+    texts = {p["url"]: re.sub(r"\s*¶\s*", " ", p.get("text_free", p["text"])) for p in read_jsonl(ddir / "pages.jsonl")}
+    # fragment z run.py (kolumna kontekst), a dla starszych próbek - wyszukany w tekście strony
+    items = [{**r, "snippet": snippet(r.get("kontekst") or texts.get(r["source_url"], ""), r.get("anchor", ""))}
+             for r in rows]
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -137,7 +140,7 @@ def main() -> None:
         def do_POST(self):
             data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             rows[data["idx"]]["ok"] = items[data["idx"]]["ok"] = data["ok"]
-            write_csv(path, rows, FIELDS)
+            write_csv(path, rows, fields)
             self.send_response(204)
             self.end_headers()
 
