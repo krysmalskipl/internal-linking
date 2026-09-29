@@ -30,6 +30,7 @@ internal-linking run --domains-file domains.txt          # one domain per line
 internal-linking run --domain example.com --dry-run      # count pairs and estimate cost, no Jev calls
 internal-linking run --domain example.com --no-crawl     # reuse downloaded pages
 internal-linking run --domain example.com --max-links 5  # new links per page (default 3)
+internal-linking run --domain example.com --keywords keywords.csv   # keyword mode, see below
 internal-linking questions --lang en                     # print the questions sent to Jev (en / pl)
 ```
 
@@ -42,6 +43,22 @@ Results land in `data/<domain>/` (change with `--data-dir`):
 
 Jev answers are cached (`jev_pairs.jsonl`), so re-runs only pay for new or changed pairs. Rough numbers: a 50-page site takes about a minute and about $0.01.
 
+## Keyword mode
+
+By default the tool works out targets on its own: every page's title, H1 and slug are its keywords. With `--keywords` it links **only the phrases you list** - a keyword → URL map like the ones used in SEO audits:
+
+```csv
+keyword,target_url,match
+bathroom renovation,https://example.com/bathroom-renovation/,exact
+kitchen renovation,,partial
+```
+
+- `target_url` is optional - without it the target is the page whose title, H1 or slug matches the keyword best (marked "auto" in the report)
+- `match`: `exact` (the whole keyword, inflection-aware) or `partial` (at least 2 of its words; default); one-word keywords are allowed here
+- a plain text file with one keyword per line works too
+- the same safety rules and the Jev check apply; each keyword is linked at most once per page, with no site-wide limit
+- `keywords_summary.csv` and the table at the top of the report show, per keyword, where it was found, how many links it got and why the rest were rejected
+
 ## How it works
 
 1. **Crawl** (`crawl.py`) - respects robots.txt (`Disallow`, `Crawl-delay`), reads the sitemap (from `robots.txt` or common locations) and, for each page, the title, H1, meta description, language, typed content blocks (paragraph, list item, heading...) and existing links (in content, breadcrumbs, elsewhere). Skips redirects, `noindex` and pages canonicalised elsewhere.
@@ -50,7 +67,7 @@ Jev answers are cached (`jev_pairs.jsonl`), so re-runs only pay for new or chang
    - `partial` - at least two words of the target's name, including a distinctive one,
    - existing link text and code are never used; no single words or generic fillers.
 3. **Rules** (`pipeline.py`) - no targets the page already links to (site-wide menu and footer links don't count), same language only, no phrases repeated like a template (e.g. an author byline), a phrase that is the exact name of another page is reserved for that page.
-4. **Jev** (`jev/pairs.py`) - one call per pair with closed questions: does the paragraph discuss the target's topic, is the phrase a natural anchor, link value (0-4), cannibalisation, overall verdict with a reason code. Inspired by the Jev mode in [newsjack](https://github.com/elvisun/newsjack). Print the questions with `internal-linking questions`.
+4. **Jev** (`jev/pairs.py`) - one call per pair, with the source page, the section heading, the passage and its neighbouring passages, and the target page; closed questions: does the paragraph discuss the target's topic, is the phrase a natural anchor, link value (0-4), cannibalisation, overall verdict with a reason code. Inspired by the Jev mode in [newsjack](https://github.com/elvisun/newsjack). Print the questions with `internal-linking questions`.
 5. **Selection** - thresholds from `config.json` (shared by all domains), one link per phrase, at most N links per page by score.
 
 ## Thresholds and quality checks (optional)
@@ -68,7 +85,8 @@ internal-linking evaluate --domain example.com --write-config   # signal AUC and
 ```
 src/internal_linking/
 ├── cli.py            # `internal-linking` command
-├── pipeline.py       # candidates, rules, selection, one run per domain
+├── pipeline.py       # candidates (automatic and keyword mode), rules, selection
+├── keywords.py       # keyword list loading, target auto-pick
 ├── crawl.py          # sitemap, robots.txt, content blocks, existing links
 ├── anchors.py        # exact / partial phrase matching, language detection
 ├── report.py         # report.html

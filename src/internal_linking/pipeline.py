@@ -3,13 +3,17 @@
 crawl the sitemap → exact/partial phrases in paragraphs and lists (anchors.py) → deterministic
 rules → Jev judges every pair (jev/pairs.py, cached) → thresholds from config.json → at most N
 links per page → data/<domain>/links.csv, recommendations.csv and report.html.
+
+Two modes: automatic (targets and phrases come from the pages' titles) and keyword mode
+(--keywords: only the phrases you list, see keywords.py).
 """
 import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .anchors import AnchorFinder, detect_lang
+from . import keywords as kw
+from .anchors import AnchorFinder, content_words, detect_lang
 from .common import append_jsonl, data_dir, norm_url, read_jsonl, write_csv
 from .config import load_config
 from .crawl import crawl
@@ -53,22 +57,62 @@ def already_linked(src: dict, sitewide: set[str]) -> set[str]:
     return set(src["content_links"]) | set(src.get("breadcrumb_links", [])) | local
 
 
-def find_candidates(pages: list[dict], cfg: dict) -> tuple[list[dict], dict]:
-    """(source, phrase, target) pairs with the phrase present in the text, after deterministic rules.
-    Pages in unsupported languages are left out."""
+def prepare(pages: list[dict], cfg: dict) -> dict:
+    """Shared per-site data for both modes. Pages in unsupported languages are left out."""
     for p in pages:
         p["lang"] = detect_lang(p)
     skipped_lang = sum(not p["lang"] for p in pages)
     pages = [p for p in pages if p["lang"]]
     suffixes = site_suffixes(pages)
-    sitewide = sitewide_links(pages)
-    finder = AnchorFinder(pages)
-    titles = [clean_title(p["title"], suffixes) for p in pages]
-    sources = [i for i, p in enumerate(pages) if len(p["text"].split()) >= cfg["min_words"]]
+    return {
+        "pages": pages,
+        "titles": [clean_title(p["title"], suffixes) for p in pages],
+        "sitewide": sitewide_links(pages),
+        "finder": AnchorFinder(pages),
+        "sources": [i for i, p in enumerate(pages) if len(p["text"].split()) >= cfg["min_words"]],
+        "skipped_lang": skipped_lang,
+    }
+
+
+def drop_template_phrases(anchors: dict, cfg: dict, n_sources: int) -> int:
+    """The same phrase to the same target on many pages is a template element (author byline, post
+    footer, repeated promo block), not content - not a link candidate. Returns how many were dropped."""
+    repeats = Counter((found[0].lower(), j) for (i, j), found in anchors.items())
+    limit = max(3, cfg["template_share"] * n_sources)
+    template = [k for k, found in anchors.items() if repeats[(found[0].lower(), k[1])] > limit]
+    for k in template:
+        del anchors[k]
+    return len(template)
+
+
+def make_rows(site: dict, anchors: dict, keyword_of: dict | None = None) -> list[dict]:
+    pages, titles = site["pages"], site["titles"]
+    rows = []
+    for (i, j), (phrase, kind, b) in anchors.items():
+        blocks, lang = pages[i]["blocks"], pages[i]["lang"]
+        row = {
+            "lang": lang,
+            "source_url": pages[i]["url"], "source_title": titles[i],
+            "target_url": pages[j]["url"], "target_title": titles[j],
+            "anchor": phrase, "anchor_type": kind, "placement": pairs.PLACEMENT.get(blocks[b]["tag"], "other"),
+            "context": pairs.context(blocks[b], phrase),
+            "in_menu": int(norm_url(pages[j]["url"]) in site["sitewide"]),
+            "_state": pairs.build_state(pages[i], titles[i], blocks, b, pages[j], titles[j], phrase, lang),
+        }
+        if keyword_of is not None:
+            row["keyword"] = keyword_of[(i, j)]
+        rows.append(row)
+    return rows
+
+
+def find_candidates(pages: list[dict], cfg: dict) -> tuple[list[dict], dict]:
+    """Automatic mode: targets and phrases come from the pages' own titles, H1s and slugs."""
+    site = prepare(pages, cfg)
+    pages, titles, finder, sources = site["pages"], site["titles"], site["finder"], site["sources"]
 
     anchors = {}  # (source, target) -> (phrase, exact/partial, block index)
     for i in sources:
-        linked = already_linked(pages[i], sitewide)
+        linked = already_linked(pages[i], site["sitewide"])
         for j, t in enumerate(pages):
             # links only within one language (/en/ versions etc. are separate)
             if j != i and norm_url(t["url"]) not in linked and t["lang"] == pages[i]["lang"]:
@@ -77,13 +121,7 @@ def find_candidates(pages: list[dict], cfg: dict) -> tuple[list[dict], dict]:
                 if found:
                     anchors[(i, j)] = found
 
-    # the same phrase to the same target on many pages is a template element (author byline,
-    # post footer), not content - not a link candidate
-    repeats = Counter((phrase.lower(), j) for (i, j), (phrase, _, _) in anchors.items())
-    limit = max(3, cfg["template_share"] * len(sources))
-    template = [k for k, (phrase, _, _) in anchors.items() if repeats[(phrase.lower(), k[1])] > limit]
-    for k in template:
-        del anchors[k]
+    template = drop_template_phrases(anchors, cfg, len(sources))
     # a phrase that is the exact name of another page is reserved for that page
     reserved = 0
     for (i, j), (phrase, kind, _) in list(anchors.items()):
@@ -94,24 +132,53 @@ def find_candidates(pages: list[dict], cfg: dict) -> tuple[list[dict], dict]:
             del anchors[(i, j)]
             reserved += 1
 
-    rows = []
-    for (i, j), (phrase, kind, b) in anchors.items():
-        block = pages[i]["blocks"][b]
-        lang = pages[i]["lang"]
-        state = pairs.build_state(pages[i], titles[i], block, pages[j], titles[j], phrase, lang)
-        rows.append({
-            "lang": lang,
-            "source_url": pages[i]["url"], "source_title": titles[i],
-            "target_url": pages[j]["url"], "target_title": titles[j],
-            "anchor": phrase, "anchor_type": kind, "placement": pairs.PLACEMENT.get(block["tag"], "other"),
-            "context": pairs.context(block, phrase), "in_menu": int(norm_url(pages[j]["url"]) in sitewide),
-            "_state": state,
-        })
     info = {"languages": dict(Counter(p["lang"] for p in pages)), "sources": len(sources),
-            "template phrases": len(template), "reserved phrases": reserved}
-    if skipped_lang:
-        info["pages in unsupported languages"] = skipped_lang
-    return rows, info
+            "template phrases": template, "reserved phrases": reserved}
+    if site["skipped_lang"]:
+        info["pages in unsupported languages"] = site["skipped_lang"]
+    return make_rows(site, anchors), info
+
+
+def keyword_candidates(pages: list[dict], cfg: dict, keywords: list[dict]) -> tuple[list[dict], dict, list[dict]]:
+    """Keyword mode: only the given phrases, each linked to its (given or auto-picked) target."""
+    site = prepare(pages, cfg)
+    pages, titles, finder, sources = site["pages"], site["titles"], site["finder"], site["sources"]
+    resolved, warnings = kw.resolve(keywords, pages, titles)
+    for w in warnings:
+        print(f"  ! {w}")
+
+    anchors, keyword_of = {}, {}
+    for k in resolved:
+        j, target = k["target"], pages[k["target"]]
+        n_words = len(content_words(k["keyword"], target["lang"]))
+        for i in sources:
+            if i == j or pages[i]["lang"] != target["lang"] or (i, j) in anchors:
+                continue
+            if norm_url(target["url"]) in already_linked(pages[i], site["sitewide"]):
+                continue
+            found = finder.find_in_blocks(pages[i].get("blocks", []), titles[i], k["keyword"], "", "",
+                                          target["lang"], min_hits=min(2, n_words))
+            if found and (k["match"] == "partial" or found[1] == "exact"):
+                anchors[(i, j)] = found
+                keyword_of[(i, j)] = k["keyword"]
+    template = drop_template_phrases(anchors, cfg, len(sources))
+    info = {"keywords": len(keywords), "resolved": len(resolved), "sources": len(sources),
+            "template phrases": template}
+    return make_rows(site, anchors, keyword_of), info, resolved
+
+
+def keyword_summary(resolved: list[dict], rows: list[dict], pages: list[dict]) -> list[dict]:
+    out = []
+    for k in resolved:
+        mine = [r for r in rows if r.get("keyword") == k["keyword"]]
+        reasons = Counter(r["decision_reason"] for r in mine if r["decision"] == "reject")
+        out.append({
+            "keyword": k["keyword"], "match": k["match"], "target_url": k["target_url"],
+            "target_auto_picked": int(k["auto_target"]), "pages_with_phrase": len(mine),
+            "links_to_insert": sum(r["decision"] == "accept" for r in mine),
+            "top_reject_reasons": ", ".join(f"{r} {n}" for r, n in reasons.most_common(3)),
+        })
+    return out
 
 
 def judge(rows: list[dict], ddir: Path, workers: int) -> float:
@@ -173,7 +240,11 @@ def process(domain: str, args, cfg: dict) -> dict:
     if not pages or "blocks" not in pages[0]:
         raise RuntimeError("no up-to-date pages.jsonl - run without --no-crawl")
 
-    rows, info = find_candidates(pages, cfg)
+    resolved = None
+    if args.keywords:
+        rows, info, resolved = keyword_candidates(pages, cfg, kw.load_keywords(args.keywords))
+    else:
+        rows, info = find_candidates(pages, cfg)
     print(f"pages: {len(pages)}, " + ", ".join(f"{k}: {v}" for k, v in info.items())
           + f", pairs with a phrase: {len(rows)}")
     if args.dry_run:
@@ -188,12 +259,17 @@ def process(domain: str, args, cfg: dict) -> dict:
     rejected = [r for r in rows if r["decision"] == "reject"]
 
     rows.sort(key=lambda r: (r["decision"] != "accept", r["source_url"], -r.get("score", 0)))
-    write_csv(ddir / "recommendations.csv", rows, FIELDS)
-    write_csv(ddir / "links.csv", accepted, FIELDS[2:])
+    fields = FIELDS + (["keyword"] if resolved is not None else [])
+    write_csv(ddir / "recommendations.csv", rows, fields)
+    write_csv(ddir / "links.csv", accepted, fields[2:])
+    summary = None
+    if resolved is not None:
+        summary = keyword_summary(resolved, rows, pages)
+        write_csv(ddir / "keywords_summary.csv", summary, list(summary[0].keys()) if summary else ["keyword"])
     pages_with = len({r["source_url"] for r in accepted})
     write_report(ddir / "report.html", domain, accepted, rejected, {
         "links to insert": len(accepted), "pages with new links": pages_with,
-        "suggestions judged": len(rows), "Jev cost": f"${cost:.3f}"})
+        "suggestions judged": len(rows), "Jev cost": f"${cost:.3f}"}, keyword_summary=summary)
     print(f"links to insert: {len(accepted)} on {pages_with} pages "
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")
     print(f"→ {ddir / 'report.html'}\n→ {ddir / 'links.csv'}")
@@ -228,6 +304,7 @@ def add_parser(sub) -> None:
     p = sub.add_parser("run", help="crawl, judge and report internal links for one or more domains")
     p.add_argument("--domain", action="append", default=[], help="domain (repeatable)")
     p.add_argument("--domains-file", help="file with one domain per line (# for comments)")
+    p.add_argument("--keywords", help="keyword mode: CSV/TXT with the phrases to link (see keywords.py)")
     p.add_argument("--max-links", type=int, help="max new links per page (default from config)")
     p.add_argument("--no-crawl", action="store_true", help="reuse the saved pages.jsonl")
     p.add_argument("--dry-run", action="store_true", help="count pairs and estimate cost without calling Jev")

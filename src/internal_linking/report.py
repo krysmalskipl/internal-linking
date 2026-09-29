@@ -37,6 +37,9 @@ mark { background:var(--mark); color:inherit; border-radius:3px; padding:0 2px }
 .meta { font-size:13px; color:var(--muted) } .meta b { color:var(--ink) }
 a { color:var(--accent) } details { margin-top:28px } summary { cursor:pointer; font-weight:600 }
 .rej { font-size:13px; padding:6px 0; border-bottom:1px solid var(--line) } .why { color:var(--no) }
+.kw { width:100%; border-collapse:collapse; font-size:14px; margin-top:10px; display:block; overflow-x:auto }
+.kw th, .kw td { text-align:left; padding:6px 10px 6px 0; border-bottom:1px solid var(--line); white-space:nowrap }
+.kw th { color:var(--muted); font-weight:500 }
 """
 
 
@@ -48,7 +51,8 @@ def _ctx(context: str, anchor: str) -> str:
             + html.escape(context[i + len(anchor):]))
 
 
-def write_report(path, domain: str, accepted: list[dict], rejected: list[dict], stats: dict) -> None:
+def write_report(path, domain: str, accepted: list[dict], rejected: list[dict], stats: dict,
+                 keyword_summary: list[dict] | None = None) -> None:
     by_page = defaultdict(list)
     for r in accepted:
         by_page[(r["source_url"], r["source_title"])].append(r)
@@ -61,6 +65,16 @@ def write_report(path, domain: str, accepted: list[dict], rejected: list[dict], 
     for label, value in stats.items():
         parts.append(f"<div class='stat'><b>{e(str(value))}</b>{e(label)}</div>")
     parts.append("</div>")
+    if keyword_summary is not None:
+        parts.append("<section class='page'><h2>Keywords</h2><table class='kw'><tr><th>keyword</th><th>match</th>"
+                     "<th>target</th><th>found on</th><th>links</th><th>main reject reasons</th></tr>")
+        for k in keyword_summary:
+            auto = " <span class='meta'>(auto)</span>" if k["target_auto_picked"] else ""
+            parts.append(f"<tr><td><b>{e(k['keyword'])}</b></td><td>{e(k['match'])}</td>"
+                         f"<td><a href='{e(k['target_url'])}'>{e(urlsplit(k['target_url']).path or '/')}</a>{auto}</td>"
+                         f"<td>{k['pages_with_phrase']}</td><td>{k['links_to_insert']}</td>"
+                         f"<td class='meta'>{e(k['top_reject_reasons'])}</td></tr>")
+        parts.append("</table></section>")
     if not accepted:
         parts.append("<p>No links pass the thresholds.</p>")
     for (url, title), links in sorted(by_page.items(), key=lambda kv: -len(kv[1])):
@@ -68,7 +82,8 @@ def write_report(path, domain: str, accepted: list[dict], rejected: list[dict], 
                      f"<div class='url'><a href='{e(url)}'>{e(urlsplit(url).path or '/')}</a></div>")
         for r in links:
             parts.append(
-                f"<div class='link'><div class='meta'>{e(r['placement'])} · phrase "
+                f"<div class='link'><div class='meta'>{e(r['placement'])} · "
+                + (f"keyword <b>{e(r['keyword'])}</b> · " if r.get("keyword") else "") + "phrase "
                 f"<b>“{e(r['anchor'])}”</b> ({e(r['anchor_type'])}) → "
                 f"<a href='{e(r['target_url'])}'>{e(r['target_title'])}</a></div>"
                 f"<div class='ctx'>{_ctx(r['context'], r['anchor'])}</div>"

@@ -16,7 +16,7 @@ QUESTIONS = {
     "kontekst": {
         "type": "noul",
         "instructions": "Czy fragment tekstu, w którym stoi fraza linku, omawia zagadnienie, "
-                        "które strona docelowa rozwija?",
+                        "które strona docelowa rozwija? Weź pod uwagę nagłówek sekcji i sąsiednie fragmenty.",
         "criteria": {
             "true": "Tak - czytelnik po kliknięciu dostanie rozwinięcie tego, o czym właśnie czyta.",
             "false": "Nie - fragment mówi o czymś innym, a słowa frazy tylko powierzchownie zgadzają się "
@@ -76,7 +76,8 @@ PLACES = {"p": "akapit", "li": "punkt listy", "td": "komórka tabeli", "dd": "de
 QUESTIONS_EN = {
     "context": {
         "type": "noul",
-        "instructions": "Does the passage containing the link phrase discuss the subject that the target page covers?",
+        "instructions": "Does the passage containing the link phrase discuss the subject that the target page "
+                        "covers? Take the section heading and the neighbouring passages into account.",
         "criteria": {
             "true": "Yes - after clicking, the reader gets more on exactly what they are reading about.",
             "false": "No - the passage is about something else and the phrase only superficially matches the "
@@ -142,21 +143,44 @@ def context(block: dict, phrase: str) -> str:
     return ("…" if start else "") + raw[start:end] + ("…" if end < len(raw) else "")
 
 
-def build_state(src: dict, src_title: str, block: dict, target: dict, target_title: str, phrase: str,
-                lang: str = "pl") -> dict:
+NEIGHBOUR_CHARS = 300
+HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+
+
+def surroundings(blocks: list[dict], b: int) -> tuple[str, str, str]:
+    """Section heading above block b, and the end of the previous / start of the next passage."""
+    section = next((x["raw"] for x in reversed(blocks[:b]) if x["tag"] in HEADINGS), "")
+    prev = next((x.get("raw") or x["text"] for x in reversed(blocks[:b]) if x["tag"] not in HEADINGS), "")
+    nxt = next((x.get("raw") or x["text"] for x in blocks[b + 1:] if x["tag"] not in HEADINGS), "")
+    return section, prev[-NEIGHBOUR_CHARS:], nxt[:NEIGHBOUR_CHARS]
+
+
+def build_state(src: dict, src_title: str, blocks: list[dict], b: int, target: dict, target_title: str,
+                phrase: str, lang: str = "pl") -> dict:
+    """What Jev sees for one pair: the source page, the section, the passage with its neighbours and
+    the target page."""
+    block = blocks[b]
+    section, prev, nxt = surroundings(blocks, b)
     if lang == "en":
         return {
-            "source_page": {"title": src_title, "h1": src["h1"], "url": src["url"]},
+            "source_page": {"title": src_title, "h1": src["h1"], "description": src["meta"][:200],
+                            "url": src["url"]},
+            "section_heading": section,
             "placement": PLACES_EN.get(block["tag"], "other passage"),
+            "previous_passage": prev,
             "passage_with_phrase": context(block, phrase),
+            "next_passage": nxt,
             "link_phrase": phrase,
             "target_page": {"title": target_title, "h1": target["h1"], "description": target["meta"][:200],
                             "url": target["url"], "content_start": target["text"][:400]},
         }
     return {
-        "strona_zrodlowa": {"tytul": src_title, "h1": src["h1"], "url": src["url"]},
+        "strona_zrodlowa": {"tytul": src_title, "h1": src["h1"], "opis": src["meta"][:200], "url": src["url"]},
+        "naglowek_sekcji": section,
         "miejsce": PLACES.get(block["tag"], "inny fragment"),
+        "poprzedni_fragment": prev,
         "fragment_z_fraza": context(block, phrase),
+        "nastepny_fragment": nxt,
         "fraza_linku": phrase,
         "strona_docelowa": {"tytul": target_title, "h1": target["h1"], "opis": target["meta"][:200],
                             "url": target["url"], "poczatek_tresci": target["text"][:400]},

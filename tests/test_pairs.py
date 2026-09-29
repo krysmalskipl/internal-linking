@@ -32,17 +32,17 @@ def test_context_is_trimmed_around_the_phrase():
 
 def test_cache_key_is_stable_and_depends_on_state():
     src, tgt = page("https://example.pl/a/", "A", "tekst"), page("https://example.pl/b/", "B", "tekst")
-    block = {"tag": "p", "text": "tekst", "raw": "tekst"}
-    s1 = pairs.build_state(src, "A", block, tgt, "B", "tekst")
-    s2 = pairs.build_state(src, "A", block, tgt, "B", "tekst")
+    blocks = [{"tag": "p", "text": "tekst", "raw": "tekst"}]
+    s1 = pairs.build_state(src, "A", blocks, 0, tgt, "B", "tekst")
+    s2 = pairs.build_state(src, "A", blocks, 0, tgt, "B", "tekst")
     assert pairs.cache_key(s1) == pairs.cache_key(s2)
     assert pairs.cache_key(s1) != pairs.cache_key({**s1, "fraza_linku": "inna"})
 
 
 def test_english_pairs_use_english_questions_and_keys():
     src, tgt = page("https://example.com/a/", "A", "text", lang="en"), page("https://example.com/b/", "B", "text", lang="en")
-    block = {"tag": "li", "text": "text", "raw": "text"}
-    state = pairs.build_state(src, "A", block, tgt, "B", "text", "en")
+    blocks = [{"tag": "li", "text": "text", "raw": "text"}]
+    state = pairs.build_state(src, "A", blocks, 0, tgt, "B", "text", "en")
     assert state["placement"] == "list item" and state["link_phrase"] == "text"
     assert pairs.cache_key(state, "en") != pairs.cache_key(state, "pl")
     resp = {"answers": {
@@ -53,3 +53,16 @@ def test_english_pairs_use_english_questions_and_keys():
     assert pairs.summarize(resp, "en") == {"score": 0.2, "jev_context": 0.7, "jev_anchor": 0.6, "jev_value": 0.5,
                                            "jev_cannibalisation": 0.2, "jev_verdict": "wrong_intent"}
     assert set(pairs.QUESTIONS_EN["verdict"]["criteria"]) == set(pairs.VERDICTS.values())
+
+
+def test_state_carries_section_heading_and_neighbouring_passages():
+    blocks = [{"tag": "h2", "text": "Opony", "raw": "Opony"},
+              {"tag": "p", "text": "Akapit przed.", "raw": "Akapit przed."},
+              {"tag": "h3", "text": "Zima", "raw": "Zima"},
+              {"tag": "p", "text": "Wymiana opon zimowych.", "raw": "Wymiana opon zimowych."},
+              {"tag": "li", "text": "Punkt po.", "raw": "Punkt po."}]
+    src, tgt = page("https://example.pl/a/", "A", "t"), page("https://example.pl/b/", "B", "t")
+    state = pairs.build_state(src, "A", blocks, 3, tgt, "B", "opon zimowych")
+    assert state["naglowek_sekcji"] == "Zima"
+    assert state["poprzedni_fragment"] == "Akapit przed." and state["nastepny_fragment"] == "Punkt po."
+    assert state["fragment_z_fraza"] == "Wymiana opon zimowych."

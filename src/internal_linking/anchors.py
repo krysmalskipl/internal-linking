@@ -125,14 +125,14 @@ class AnchorFinder:
         return self._profiles[key]
 
     def find_in_blocks(self, blocks: list[dict], src_title: str, target_title: str, target_h1: str,
-                       target_url: str, lang: str = "pl") -> tuple[str, str, int] | None:
+                       target_url: str, lang: str = "pl", min_hits: int = 2) -> tuple[str, str, int] | None:
         """Best phrase across content blocks (exact before partial, earlier block first):
         (phrase, 'exact' | 'partial', block index) or None. Headings are skipped."""
         best = None
         for n, b in enumerate(blocks):
             if b["tag"] in NO_LINK_BLOCKS:
                 continue
-            found = self.find(b["text"], src_title, target_title, target_h1, target_url, lang)
+            found = self.find(b["text"], src_title, target_title, target_h1, target_url, lang, min_hits)
             if found and (best is None or (found[1] == "exact" and best[1] != "exact")):
                 best = (found[0], found[1], n)
                 if found[1] == "exact":
@@ -140,8 +140,9 @@ class AnchorFinder:
         return best
 
     def find(self, src_text: str, src_title: str, target_title: str, target_h1: str,
-             target_url: str, lang: str = "pl") -> tuple[str, str] | None:
-        """(phrase, 'exact' | 'partial') or None when the text has no matching phrase."""
+             target_url: str, lang: str = "pl", min_hits: int = 2) -> tuple[str, str] | None:
+        """(phrase, 'exact' | 'partial') or None when the text has no matching phrase.
+        min_hits: target words the phrase needs (2 by default; 1 only for a user's one-word keyword)."""
         vocab, keyphrases, distinctive = self.profile(target_title, target_h1, target_url, lang)
         if not vocab:
             return None
@@ -171,7 +172,7 @@ class AnchorFinder:
                     if k is None:
                         break  # every content word of the phrase must come from the target
                     hits.add(k)
-                    enough = len(hits) >= 2
+                    enough = len(hits) >= min_hits
                     # a phrase describing the source page itself (e.g. "bikes" on a page about
                     # e-bikes) would cannibalise it - skip
                     about_source = all(any(same_word(vocab[h], o) for o in own) for h in hits)
