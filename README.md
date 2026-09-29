@@ -2,11 +2,14 @@
 
 Internal link suggestions for any website, in one command. The tool finds phrases that **already exist** in your content (exact or partial match of another page's name) and asks [Jev](https://openrouter.ai/) - a typed-decision model by TypeSafe, available through OpenRouter - to judge every page → phrase → target pair. The output is a CMS-agnostic HTML report and CSV with links ready to insert.
 
-> Built for Polish-language sites: phrase matching handles Polish inflection, and the questions sent to Jev are in Polish. Code comments and CLI output are in Polish too.
+> Built for Polish-language sites: phrase matching handles Polish inflection and the questions sent to Jev are in Polish. Everything else - code, CLI output, the report - is in English.
 
-## Why
+## Why?
 
-Most internal linking tools either suggest "related pages" without telling you where to put the link, or generate new sentences. This one only proposes links on text that is already on the page, and filters them with a cheap, fast model that answers closed questions with probabilities - so you can set thresholds instead of reading prose.
+- **Links on text that is already there.** Most internal linking tools suggest "related pages" and leave it to you to find a spot, or write new sentences for you. This one only proposes a link where a matching phrase already exists, so you get the paragraph, the phrase and the target - nothing to rewrite.
+- **Judged, not guessed.** Jev answers closed questions with probabilities (is the passage on topic, is the phrase a natural anchor, would the link cannibalise the source page), so decisions come from thresholds you can measure and tune instead of from reading generated prose.
+- **Cheap enough for every site.** One Jev call per pair, cached between runs - a 50-page site costs about a cent.
+- **Safe defaults.** No links from headings, no duplicates of existing links, no phrases repeated like a template, same language only, at most 3 new links per page.
 
 ## Install
 
