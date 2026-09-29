@@ -341,9 +341,8 @@ def process(domain: str, args, cfg: dict) -> dict:
         summary = keyword_summary(resolved, rows, pages)
         write_csv(ddir / "keywords_summary.csv", summary, list(summary[0].keys()) if summary else ["keyword"])
     pages_with = len({r["source_url"] for r in accepted})
-    write_report(ddir / "report.html", domain, accepted, rejected, {
-        "links to insert": len(accepted), "pages with new links": pages_with,
-        "suggestions judged": len(rows), "Jev cost": f"${cost:.3f}"}, keyword_summary=summary)
+    max_links = args.max_links or cfg["max_links_per_page"]
+    write_report(ddir / "report.html", domain, rows, cfg, max_links, {"Jev cost": f"${cost:.3f}"})
     print(f"links to insert: {len(accepted)} on {pages_with} pages "
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")
     print(f"done in {time.monotonic() - started:.0f} s")

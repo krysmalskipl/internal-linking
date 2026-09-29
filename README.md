@@ -4,9 +4,9 @@ Internal link suggestions for any website, in one command. The tool finds phrase
 
 > Works with Polish and English pages. The language is detected per page (`<html lang>`, or the text when the attribute is missing), so bilingual sites get links within each language version. Other languages are skipped.
 
-![Report: pages with new links, the paragraph with the highlighted phrase and the target page](examples/report.png)
+![Interactive report: filters in % on the left, each link shown as where (the paragraph with the highlighted phrase), what (the link text) and where to (the target page)](examples/report.png)
 
-Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.pl.html) - a real run on a 43-page SEO blog: 28 links on 20 pages, 127 suggestions judged, $0.01. Download it and open it in a browser.
+Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.pl.html) - a real run on a 43-page SEO blog: 28 links on 20 pages, 140 suggestions judged, $0.01. Download it and open it in a browser.
 
 ## Why?
 
@@ -47,13 +47,14 @@ internal-linking run --domain example.com --max-links 5  # new links per page (d
 internal-linking run --domain shop.com --targets '/category/|/blog/'   # large shop: link only to categories and posts
 internal-linking run --domain shop.com --sources '/blog/'               # only blog posts get new links
 internal-linking run --domain example.com --keywords keywords.csv   # keyword mode, see below
+internal-linking report --domain example.com             # rebuild report.html from saved results - no crawl, no Jev calls
 internal-linking questions --lang en                     # print the questions sent to Jev (en / pl)
 ```
 
 (With the virtualenv not activated, use `.venv/bin/internal-linking`.)
 
 Results land in `data/<domain>/` (change with `--data-dir`):
-- `report.html` - pages with new links: the paragraph with the highlighted phrase, the target, scores; rejected suggestions with reasons at the bottom
+- `report.html` - an interactive, self-contained report: every link as *where* (the paragraph with the highlighted phrase), *what* (the link text) and *where to* (the target), with copy buttons for the text, the URL and ready HTML; sliders in % for every Jev score, links per page, match type and search change the selection live; views by page, by target, by keyword and rejected (with reasons); CSV export of the current selection
 - `links.csv` - links to insert
 - `recommendations.csv` - every judged suggestion with its decision and reason
 
@@ -105,7 +106,7 @@ src/internal_linking/
 ├── keywords.py       # keyword list loading, target auto-pick
 ├── crawl.py          # sitemap, robots.txt, content blocks, existing links
 ├── anchors.py        # exact / partial phrase matching, language detection
-├── report.py         # report.html
+├── report.py         # interactive report.html, `report` command
 ├── config.py         # thresholds (config.json)
 ├── jev/client.py     # OpenRouter decisions API
 ├── jev/pairs.py      # questions per pair, answer → columns, hard rules
