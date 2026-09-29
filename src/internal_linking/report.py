@@ -9,8 +9,9 @@ import json
 from datetime import date
 from pathlib import Path
 
-from .common import data_dir, read_csv
+from .common import data_dir, norm_url, read_csv, read_jsonl
 from .config import load_config
+from .crawl import strip_boilerplate
 
 NUMERIC = {"score": "sc", "jev_context": "cx", "jev_anchor": "an", "jev_value": "va", "jev_cannibalisation": "ca"}
 
@@ -34,8 +35,20 @@ def _compact(r: dict) -> dict:
     return row
 
 
+def page_summary(pages: list[dict]) -> dict:
+    """URL → title and the number of other pages linking to it from their content today
+    (template links - menu, footer, sidebars - excluded)."""
+    strip_boilerplate(pages)  # idempotent; older saved crawls may still hold template blocks
+    inbound: dict[str, set[str]] = {}
+    for p in pages:
+        for link in p.get("content_links", []):
+            inbound.setdefault(link, set()).add(norm_url(p["url"]))
+    return {p["url"]: {"title": p.get("title", ""), "in": len(inbound.get(norm_url(p["url"]), set()) - {norm_url(p["url"])})}
+            for p in pages}
+
+
 def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links: int,
-                 stats: dict | None = None) -> None:
+                 stats: dict | None = None, pages: list[dict] | None = None) -> None:
     payload = {
         "domain": domain,
         "date": date.today().isoformat(),
@@ -44,6 +57,7 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
                      "can": round(cfg["cannibalisation_max"] * 100), "max": max_links},
         "stats": stats or {},
         "rows": [_compact(r) for r in rows],
+        "pages": page_summary(pages) if pages else {},
     }
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     path.write_text(TEMPLATE.replace("__DATA__", data), encoding="utf-8")
@@ -59,7 +73,8 @@ def rebuild(args) -> None:
             print(f"! {domain}: no {src} - run `internal-linking run --domain {domain}` first")
             continue
         rows = read_csv(src)
-        write_report(ddir / "report.html", domain, rows, cfg, args.max_links or cfg["max_links_per_page"])
+        write_report(ddir / "report.html", domain, rows, cfg, args.max_links or cfg["max_links_per_page"],
+                     pages=read_jsonl(ddir / "pages.jsonl"))
         print(f"{domain}: {len(rows)} suggestions → {ddir / 'report.html'}")
 
 
@@ -126,6 +141,20 @@ select, input[type=search] { width:100%; font:inherit; font-size:14px; padding:7
 .group-h h3 { font-size:16px; margin:0 } .count { color:var(--muted); font-size:13px; white-space:nowrap }
 .url { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); word-break:break-all }
 .item { border-top:1px solid var(--line); margin-top:14px; padding-top:14px }
+details.group > summary { list-style:none; cursor:pointer } details.group > summary::-webkit-details-marker { display:none }
+details.group > summary .chev { display:inline-block; transition:transform .15s; color:var(--muted); margin-right:6px }
+details.group[open] > summary .chev { transform:rotate(90deg) }
+.compact { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px }
+.compact span { font-size:13px; background:var(--soft); border:1px solid var(--line); border-radius:8px; padding:3px 9px }
+.compact b { font-weight:600 } .compact span.arrow { color:var(--muted); margin:0 4px; background:none; border:0; padding:0 }
+.badge { display:inline-block; font-size:12px; font-weight:600; border-radius:999px; padding:2px 9px; margin-left:8px; vertical-align:2px }
+.badge.orphan { background:#fde2de; color:#8f2418 } .badge.weak { background:#fdf1d6; color:#7a520c }
+.badge.new { background:var(--accent-soft); color:var(--accent) }
+.sort { width:auto; font-size:13px; padding:6px 8px }
+table.pl { width:100%; border-collapse:collapse; font-size:14px } .pl th, .pl td { text-align:left; padding:9px 10px 9px 0;
+  border-bottom:1px solid var(--line); vertical-align:top } .pl th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase }
+.pl td.n { font-variant-numeric:tabular-nums; white-space:nowrap } .pl .plus { color:var(--accent); font-weight:700 }
+.linkish { background:none; border:0; padding:0; font:inherit; color:var(--accent); cursor:pointer; font-size:13px }
 .steps { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; align-items:start }
 .k { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); padding-top:3px; white-space:nowrap }
 .ctx { background:var(--soft); border-radius:10px; padding:10px 12px }
@@ -146,6 +175,9 @@ table.kw { width:100%; border-collapse:collapse; font-size:14px } .kw th, .kw td
 .empty { color:var(--muted); padding:30px; text-align:center } .more { text-align:center; margin:10px 0 }
 .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--bg);
   padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none } .toast.show { opacity:1 }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .badge.orphan { background:#4a1d17; color:#ffb4a8 }
+  :root:not([data-theme="light"]) .badge.weak { background:#3d2e0e; color:#f5cf7a } }
+:root[data-theme="dark"] .badge.orphan { background:#4a1d17; color:#ffb4a8 } :root[data-theme="dark"] .badge.weak { background:#3d2e0e; color:#f5cf7a }
 @media (max-width: 860px) { .layout { grid-template-columns:1fr } aside { position:static; max-height:none } }
 </style></head><body>
 <header><div><h1>Internal links to insert<span class="dot">.</span></h1><p class="sub" id="sub"></p></div>
@@ -173,9 +205,13 @@ table.kw { width:100%; border-collapse:collapse; font-size:14px } .kw th, .kw td
 </aside>
 <main>
   <div class="stats" id="stats"></div>
-  <div class="tabs"><button class="tab on" data-view="pages">By page</button><button class="tab" data-view="targets">By target</button>
+  <div class="tabs"><button class="tab on" data-view="out" title="for each page: the pages it will link to">Linking to</button>
+    <button class="tab" data-view="in" title="for each page: the pages it will get links from">Linked from</button>
+    <button class="tab" data-view="pagelist" title="every page with its links today and after the changes">Pages</button>
     <button class="tab" data-view="keywords" id="tab-kw">Keywords</button><button class="tab" data-view="rejected">Rejected</button>
-    <div class="right"><button class="btn primary" id="csv">Download CSV</button></div></div>
+    <div class="right"><select id="sort" class="sort" aria-label="Sort">
+      <option value="count">Most new links</option><option value="weak">Weakest linked today</option><option value="az">A-Z</option></select>
+      <button class="btn" id="toggle-all">Expand all</button><button class="btn primary" id="csv">Download CSV</button></div></div>
   <div id="view"></div>
 </main>
 </div>
@@ -197,15 +233,19 @@ const REASONS = { cannibalisation:"the phrase is the source page's own topic", o
 const KEY = "il-filters:" + D.domain;
 const langs = [...new Set(rows.map(r => r.l).filter(Boolean))];
 const keywords = [...new Set(rows.map(r => r.k).filter(Boolean))].sort();
-let S = { ...D.defaults, type:"all", lang:"all", kw:"all", q:"", view:"pages", hidden:{} };
+let S = { ...D.defaults, type:"all", lang:"all", kw:"all", q:"", view:"out", sort:"count", hidden:{} };
 try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) {}
+if (!["out", "in", "pagelist", "keywords", "rejected"].includes(S.view)) S.view = S.view === "targets" ? "in" : "out";
+const inbound = u => (D.pages[u] || {}).in;
+const openGroups = new Set();
+let expandAll = false;
 
 $("sub").textContent = D.domain + " · " + D.date + " · " + rows.length + " suggestions judged" +
   (D.stats["Jev cost"] ? " · Jev cost " + D.stats["Jev cost"] : "");
 $("f-lang").innerHTML = '<option value="all">all</option>' + langs.map(l => `<option>${esc(l)}</option>`).join("");
 if (langs.length < 2) $("f-lang-wrap").hidden = true;
 $("f-kw").innerHTML = '<option value="all">all keywords</option>' + keywords.map(k => `<option>${esc(k)}</option>`).join("");
-if (!keywords.length) { $("f-kw-wrap").hidden = true; $("tab-kw").hidden = true; if (S.view === "keywords") S.view = "pages"; }
+if (!keywords.length) { $("f-kw-wrap").hidden = true; $("tab-kw").hidden = true; if (S.view === "keywords") S.view = "out"; }
 
 function evaluate() {
   const q = S.q.trim().toLowerCase();
@@ -243,7 +283,7 @@ function highlight(ctx, a) {
 }
 const html = r => `<a href="${r.t}">${r.a}</a>`;
 function item(r, mode) {
-  const where = mode === "targets"
+  const where = mode === "in"
     ? `<div class="k">On page</div><div><a href="${esc(r.s)}" target="_blank">${esc(r.st || path(r.s))}</a> <span class="url">${esc(path(r.s))}</span></div>`
     : `<div class="k">Link to</div><div><a href="${esc(r.t)}" target="_blank">${esc(r.tt || path(r.t))}</a> <span class="url">${esc(path(r.t))}</span>${r.m ? '<span class="pill">already in menu</span>' : ""}</div>`;
   return `<div class="item"><div class="steps">
@@ -257,7 +297,18 @@ function item(r, mode) {
 function groups(list, key) {
   const m = new Map();
   for (const r of list) { if (!m.has(r[key])) m.set(r[key], []); m.get(r[key]).push(r); }
-  return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+  const title = ([u, l]) => (key === "s" ? l[0].st : l[0].tt) || path(u);
+  const cmp = { count: (a, b) => b[1].length - a[1].length,
+    weak: (a, b) => (inbound(a[0]) ?? 1e9) - (inbound(b[0]) ?? 1e9) || b[1].length - a[1].length,
+    az: (a, b) => title(a).localeCompare(title(b)) };
+  return [...m.entries()].sort(cmp[S.sort] || cmp.count);
+}
+function health(u) {
+  const n = inbound(u);
+  if (n == null) return "";
+  return n === 0 ? '<span class="badge orphan">orphan · 0 links today</span>'
+    : n <= 2 ? `<span class="badge weak">weak · ${n} link${n > 1 ? "s" : ""} today</span>`
+    : `<span class="count">linked from ${n} pages today</span>`;
 }
 const LIMIT = 80;
 let shown = LIMIT;
@@ -265,22 +316,53 @@ function render() {
   const acc = evaluate();
   const pages = new Set(acc.map(r => r.s)), targets = new Set(acc.map(r => r.t));
   const judged = rows.filter(r => r.sc != null).length;
+  const orphansFixed = [...targets].filter(u => inbound(u) === 0).length;
   $("stats").innerHTML = [["Links to insert", acc.length], ["Pages getting links", pages.size],
-    ["Pages linked to", targets.size], ["Avg links / page", pages.size ? (acc.length / pages.size).toFixed(1) : "0"],
+    ["Pages linked to", targets.size], ["Orphans fixed", Object.keys(D.pages).length ? orphansFixed : "–"],
     ["Share accepted", judged ? Math.round(100 * acc.length / judged) + "%" : "–"]]
     .map(([l, v]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.view === S.view));
+  $("sort").value = S.sort;
+  $("sort").hidden = $("toggle-all").hidden = !["out", "in", "pagelist"].includes(S.view);
+  $("toggle-all").hidden = !["out", "in"].includes(S.view);
+  $("toggle-all").textContent = expandAll ? "Collapse all" : "Expand all";
   const v = $("view");
-  if (S.view === "pages" || S.view === "targets") {
-    const key = S.view === "pages" ? "s" : "t";
+  if (S.view === "out" || S.view === "in") {
+    const key = S.view === "out" ? "s" : "t";
     const g = groups(acc, key);
     if (!g.length) { v.innerHTML = '<div class="empty">No links pass these filters - lower a threshold on the left.</div>'; return; }
-    v.innerHTML = g.slice(0, shown).map(([url, list]) => {
+    v.innerHTML = g.slice(0, shown).map(([url, list], n) => {
       const title = key === "s" ? (list[0].st || path(url)) : (list[0].tt || path(url));
-      const label = key === "s" ? `${list.length} link${list.length > 1 ? "s" : ""} to add here` : `linked from ${list.length} page${list.length > 1 ? "s" : ""}`;
-      return `<section class="group"><div class="group-h"><div><h3>${esc(title)}</h3><a class="url" href="${esc(url)}" target="_blank">${esc(url)}</a></div>
-        <span class="count">${label}</span></div>${list.map(r => item(r, S.view)).join("")}</section>`;
+      const label = key === "s" ? `links to ${list.length} page${list.length > 1 ? "s" : ""}` : `+${list.length} new link${list.length > 1 ? "s" : ""}`;
+      const chips = list.slice(0, 8).map(r => key === "s"
+        ? `<span><b>“${esc(r.a)}”</b><span class="arrow">→</span>${esc(r.tt || path(r.t))}</span>`
+        : `<span>${esc(r.st || path(r.s))}<span class="arrow">·</span><b>“${esc(r.a)}”</b></span>`).join("") +
+        (list.length > 8 ? `<span class="muted">+${list.length - 8} more</span>` : "");
+      const open = expandAll || openGroups.has(url) ? " open" : "";
+      return `<details class="group" data-url="${esc(url)}"${open}><summary><div class="group-h"><div>
+          <h3><span class="chev">▸</span>${esc(title)}</h3><a class="url" href="${esc(url)}" target="_blank">${esc(url)}</a></div>
+          <div><span class="badge new">${label}</span> ${key === "t" ? health(url) : ""}</div></div>
+        <div class="compact">${chips}</div></summary>${list.map(r => item(r, S.view)).join("")}</details>`;
     }).join("") + (g.length > shown ? `<div class="more"><button class="btn" id="more">Show more (${g.length - shown} left)</button></div>` : "");
+  } else if (S.view === "pagelist") {
+    const urls = new Set([...Object.keys(D.pages), ...rows.map(r => r.s), ...rows.map(r => r.t)]);
+    const outN = {}, inN = {};
+    for (const r of acc) { outN[r.s] = (outN[r.s] || 0) + 1; inN[r.t] = (inN[r.t] || 0) + 1; }
+    const title = u => (rows.find(r => r.s === u) || {}).st || (rows.find(r => r.t === u) || {}).tt || (D.pages[u] || {}).title || path(u);
+    const list = [...urls].map(u => ({ u, t: title(u), today: inbound(u), nin: inN[u] || 0, nout: outN[u] || 0 }));
+    const cmp = { count: (a, b) => b.nin - a.nin || b.nout - a.nout, az: (a, b) => a.t.localeCompare(b.t),
+      weak: (a, b) => (a.today ?? 1e9) - (b.today ?? 1e9) || b.nin - a.nin };
+    list.sort(cmp[S.sort] || cmp.count);
+    const q = S.q.trim().toLowerCase();
+    const shownList = list.filter(x => !q || (x.u + " " + x.t).toLowerCase().includes(q));
+    v.innerHTML = (Object.keys(D.pages).length ? "" : '<p class="muted">Links today are unknown - pages.jsonl was not available when the report was built.</p>') +
+      `<section class="group"><table class="pl"><tr><th>Page</th><th>Linked from today</th><th>New links in</th><th>New links out</th><th></th></tr>` +
+      shownList.slice(0, shown * 5).map(x => `<tr><td><a href="${esc(x.u)}" target="_blank">${esc(x.t)}</a><div class="url">${esc(path(x.u))}</div></td>
+        <td class="n">${x.today ?? "–"} ${x.today === 0 ? '<span class="badge orphan">orphan</span>' : x.today != null && x.today <= 2 ? '<span class="badge weak">weak</span>' : ""}</td>
+        <td class="n">${x.nin ? `<span class="plus">+${x.nin}</span>` : "–"}</td><td class="n">${x.nout ? `<span class="plus">+${x.nout}</span>` : "–"}</td>
+        <td>${x.nin ? `<button class="linkish" data-goto="in" data-q="${esc(path(x.u))}">sources ›</button>` : ""}
+            ${x.nout ? `<button class="linkish" data-goto="out" data-q="${esc(path(x.u))}">targets ›</button>` : ""}</td></tr>`).join("") +
+      "</table></section>" + (shownList.length > shown * 5 ? `<div class="more"><button class="btn" id="more">Show more (${shownList.length - shown * 5} left)</button></div>` : "");
   } else if (S.view === "keywords") {
     const kws = groups(rows.filter(r => r.k), "k");
     v.innerHTML = `<section class="group"><table class="kw"><tr><th>Keyword</th><th>Target</th><th>Found on</th><th>Links</th><th>Main reject reasons</th></tr>` +
@@ -317,7 +399,15 @@ for (const [id, k] of [["f-type", "type"], ["f-lang", "lang"], ["f-kw", "kw"]]) 
 $("f-q").addEventListener("input", e => { S.q = e.target.value; update(); });
 $("reset").addEventListener("click", () => { S = { ...S, ...D.defaults, type:"all", lang:"all", kw:"all", q:"", hidden:{} }; update(); });
 document.querySelector(".tabs").addEventListener("click", e => { const t = e.target.closest(".tab"); if (t) { S.view = t.dataset.view; update(); } });
+$("view").addEventListener("toggle", e => {
+  const d = e.target.closest("details.group");
+  if (d) d.open ? openGroups.add(d.dataset.url) : openGroups.delete(d.dataset.url);
+}, true);
+$("sort").addEventListener("change", e => { S.sort = e.target.value; update(); });
+$("toggle-all").addEventListener("click", () => { expandAll = !expandAll; if (!expandAll) openGroups.clear(); render(); });
 $("view").addEventListener("click", e => {
+  const go = e.target.closest("[data-goto]");
+  if (go) { S.view = go.dataset.goto; S.q = go.dataset.q; expandAll = true; update(); window.scrollTo(0, 0); return; }
   const c = e.target.closest("[data-copy]");
   if (c) { navigator.clipboard?.writeText(c.dataset.copy).then(() => { $("toast").classList.add("show"); setTimeout(() => $("toast").classList.remove("show"), 1200); }); return; }
   const chip = e.target.closest(".chip");

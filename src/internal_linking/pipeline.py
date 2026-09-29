@@ -342,7 +342,7 @@ def process(domain: str, args, cfg: dict) -> dict:
         write_csv(ddir / "keywords_summary.csv", summary, list(summary[0].keys()) if summary else ["keyword"])
     pages_with = len({r["source_url"] for r in accepted})
     max_links = args.max_links or cfg["max_links_per_page"]
-    write_report(ddir / "report.html", domain, rows, cfg, max_links, {"Jev cost": f"${cost:.3f}"})
+    write_report(ddir / "report.html", domain, rows, cfg, max_links, {"Jev cost": f"${cost:.3f}"}, pages=pages)
     print(f"links to insert: {len(accepted)} on {pages_with} pages "
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")
     print(f"done in {time.monotonic() - started:.0f} s")

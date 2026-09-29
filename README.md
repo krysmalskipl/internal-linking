@@ -54,7 +54,7 @@ internal-linking questions --lang en                     # print the questions s
 (With the virtualenv not activated, use `.venv/bin/internal-linking`.)
 
 Results land in `data/<domain>/` (change with `--data-dir`):
-- `report.html` - an interactive, self-contained report: every link as *where* (the paragraph with the highlighted phrase), *what* (the link text) and *where to* (the target), with copy buttons for the text, the URL and ready HTML; sliders in % for every Jev score, links per page, match type and search change the selection live; views by page, by target, by keyword and rejected (with reasons); CSV export of the current selection
+- `report.html` - an interactive, self-contained report: every link as *where* (the paragraph with the highlighted phrase), *what* (the link text) and *where to* (the target), with copy buttons for the text, the URL and ready HTML; sliders in % for every Jev score, links per page, match type and search change the selection live; views: *Linking to* (the new links each page will get), *Linked from* (where each target's new links come from, with its links today - orphans and weakly linked pages flagged), *Pages* (every page with links today, new links in and out, sortable by the weakest linked), *Keywords* and *Rejected* (with reasons); collapsible groups; light / dark switch; CSV export of the current selection
 - `links.csv` - links to insert
 - `recommendations.csv` - every judged suggestion with its decision and reason
 
