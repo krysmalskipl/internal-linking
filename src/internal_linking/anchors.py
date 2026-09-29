@@ -13,6 +13,7 @@ in the content blocks (see crawl.py), so a phrase never overlaps it. Headings ar
 import re
 import unicodedata
 from collections import Counter
+from functools import lru_cache
 from urllib.parse import urlsplit
 
 # function words plus generic blog-title fillers per language - never keywords
@@ -48,6 +49,7 @@ PUNCT = ".,;:!?()[]\"'„”«»…"
 NO_LINK_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "th"}
 
 
+@lru_cache(maxsize=500_000)
 def fold(word: str) -> str:
     word = word.replace("ł", "l")
     return "".join(c for c in unicodedata.normalize("NFKD", word) if not unicodedata.combining(c))
@@ -61,8 +63,13 @@ def is_filler(word: str, lang: str = "pl") -> bool:
     return word in STOPWORDS[lang] or word.isdigit()
 
 
+@lru_cache(maxsize=100_000)
+def _content_words(text: str, lang: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(fold(w) for w in words(text) if not is_filler(w, lang) and len(w) > 2))
+
+
 def content_words(text: str, lang: str = "pl") -> list[str]:
-    return list(dict.fromkeys(fold(w) for w in words(text) if not is_filler(w, lang) and len(w) > 2))
+    return list(_content_words(text, lang))
 
 
 def detect_lang(page: dict) -> str:
@@ -79,6 +86,16 @@ def detect_lang(page: dict) -> str:
     counts = {lang: sum(w in markers for w in sample) for lang, markers in LANG_MARKERS.items()}
     lang = max(counts, key=counts.get)
     return lang if counts[lang] >= max(3, 0.03 * len(sample)) else ""
+
+
+def word_key(folded: str) -> str:
+    """Index key of a folded word: its first 4 letters. same_word() needs a shared prefix of at least
+    4 letters (or equal words), so two words can only match when their keys are equal."""
+    return folded[:4]
+
+
+def text_keys(text: str, lang: str = "pl") -> set[str]:
+    return {word_key(w) for w in content_words(text, lang)}
 
 
 def same_word(a: str, b: str) -> bool:
@@ -115,6 +132,7 @@ class AnchorFinder:
             names.update({self.name_key(x, lang) for x in (p["title"], p["h1"]) if x})
         self.shared_names = {k for k, n in names.items() if n >= SHARED_NAME_PAGES}
         self._profiles: dict[tuple, tuple] = {}
+        self._tokens: dict[str, tuple] = {}
 
     @staticmethod
     def name_key(text: str, lang: str) -> tuple:
@@ -140,8 +158,23 @@ class AnchorFinder:
                 if idx:
                     keyphrases.append(idx)
             distinctive = {k for k, v in enumerate(vocab) if v[:5] not in self.common}
-            self._profiles[key] = (vocab, keyphrases, distinctive)
+            by_key: dict[str, list[int]] = {}
+            for k, v in enumerate(vocab):
+                by_key.setdefault(word_key(v), []).append(k)
+            self._profiles[key] = (vocab, keyphrases, distinctive, by_key)
         return self._profiles[key]
+
+    def tokens(self, text: str) -> tuple:
+        """Tokenised text, computed once per distinct text: (tokens, first word of each token
+        lower-cased, its folded form, index keys present)."""
+        cached = self._tokens.get(text)
+        if cached is None:
+            tokens = re.findall(r"\S+", text)
+            norm = [(words(t) or [""])[0] for t in tokens]
+            folded = [fold(w) for w in norm]
+            cached = (tokens, norm, folded, {word_key(f) for f in folded if f})
+            self._tokens[text] = cached
+        return cached
 
     def find_in_blocks(self, blocks: list[dict], src_title: str, target_title: str, target_h1: str,
                        target_url: str, lang: str = "pl", min_hits: int = 2) -> tuple[str, str, int] | None:
@@ -162,20 +195,22 @@ class AnchorFinder:
              target_url: str, lang: str = "pl", min_hits: int = 2) -> tuple[str, str] | None:
         """(phrase, 'exact' | 'partial') or None when the text has no matching phrase.
         min_hits: target words the phrase needs (2 by default; 1 only for a user's one-word keyword)."""
-        vocab, keyphrases, distinctive = self.profile(target_title, target_h1, target_url, lang)
+        vocab, keyphrases, distinctive, by_key = self.profile(target_title, target_h1, target_url, lang)
         if not vocab:
+            return None
+        tokens, norm, folded, keys = self.tokens(src_text)
+        # a phrase needs min_hits target words, and each can only match a word with the same key
+        if sum(len(ks) for key, ks in by_key.items() if key in keys) < min_hits:
             return None
         own = content_words(src_title, lang)
 
-        def match(word: str) -> int | None:
-            f = fold(word)
-            return next((k for k, v in enumerate(vocab) if same_word(v, f)), None)
+        def match(n: int) -> int | None:
+            f = folded[n]
+            return next((k for k in by_key.get(word_key(f), ()) if same_word(vocab[k], f)), None)
 
-        tokens = re.findall(r"\S+", src_text)
-        norm = [(words(t) or [""])[0] for t in tokens]
         best, best_score = None, None
         for i in range(len(tokens)):
-            if is_filler(norm[i], lang) or match(norm[i]) is None:
+            if is_filler(norm[i], lang) or match(i) is None:
                 continue
             hits: set[int] = set()
             gap = 0
@@ -187,7 +222,7 @@ class AnchorFinder:
                 if gap > MAX_GAP:
                     break
                 if not is_filler(w, lang):
-                    k = match(w)
+                    k = match(j)
                     if k is None:
                         break  # every content word of the phrase must come from the target
                     hits.add(k)
