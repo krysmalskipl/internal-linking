@@ -42,6 +42,7 @@ MAX_WORDS = 6
 MAX_GAP = 2                # max consecutive function words inside a phrase
 COMMON_SHARE = 0.8         # words on more pages than this share distinguish nothing
 TITLE_SHARE = 0.1          # words in this share of titles (min. 3) are not distinctive
+SHARED_NAME_PAGES = 3      # a title/H1 used by this many pages is not a page name
 SENTENCE_END = (".", "!", "?", ";", ":", "…")
 PUNCT = ".,;:!?()[]\"'„”«»…"
 NO_LINK_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "th"}
@@ -65,10 +66,15 @@ def content_words(text: str, lang: str = "pl") -> list[str]:
 
 
 def detect_lang(page: dict) -> str:
-    """Supported language of a page: <html lang> when supported, otherwise the language whose
-    function words are most frequent in the text; "" when neither applies."""
+    """Language version of a page: <html lang> when supported, else a /xx/ prefix in the URL, else the
+    language whose function words dominate the text; "" when none applies. The declared version
+    wins over the text on purpose - a page in the /pl/ version that is still in English belongs to
+    the Polish version of the site and must not get links from the English one."""
     if page.get("lang") in SUPPORTED_LANGS:
         return page["lang"]
+    prefix = urlsplit(page.get("url", "")).path.strip("/").split("/")[0].lower()
+    if prefix in SUPPORTED_LANGS:
+        return prefix
     sample = words(page.get("text", "")[:5000])
     counts = {lang: sum(w in markers for w in sample) for lang, markers in LANG_MARKERS.items()}
     lang = max(counts, key=counts.get)
@@ -101,7 +107,18 @@ class AnchorFinder:
             lang = p.get("lang") if p.get("lang") in STOPWORDS else "pl"
             t.update({w[:5] for w in content_words(f"{p['title']} {p['h1']}", lang)})
         self.common |= {s for s, n in t.items() if n >= max(3, TITLE_SHARE * len(pages))}
+        # a title or H1 shared by several pages (e.g. the brand name as H1 on every gallery page)
+        # identifies none of them, so it is never used as a target name
+        names = Counter()
+        for p in pages:
+            lang = p.get("lang") if p.get("lang") in STOPWORDS else "pl"
+            names.update({self.name_key(x, lang) for x in (p["title"], p["h1"]) if x})
+        self.shared_names = {k for k, n in names.items() if n >= SHARED_NAME_PAGES}
         self._profiles: dict[tuple, tuple] = {}
+
+    @staticmethod
+    def name_key(text: str, lang: str) -> tuple:
+        return tuple(sorted(content_words(text, lang)))
 
     def profile(self, target_title: str, target_h1: str, target_url: str, lang: str = "pl") -> tuple:
         """Target keywords (title, H1, slug) - computed once per target."""
@@ -111,6 +128,8 @@ class AnchorFinder:
             vocab: list[str] = []            # target keywords
             keyphrases: list[set[int]] = []  # title / H1 / slug as sets of indices into vocab
             for text in (target_title, target_h1, slug):
+                if text is not slug and self.name_key(text, lang) in self.shared_names:
+                    continue
                 idx = set()
                 for w in content_words(text, lang):
                     k = next((n for n, v in enumerate(vocab) if same_word(v, w)), None)

@@ -40,7 +40,7 @@ def test_menu_links_do_not_count_as_already_linked():
     pages[0]["other_links"].append("example.pl/powiazany/")
     pages[0]["content_links"] = ["example.pl/kontakt/"]
     sitewide = sitewide_links(pages)
-    assert sitewide == {"example.pl/uslugi/"}
+    assert sitewide == {"pl": {"example.pl/uslugi/"}}
     assert already_linked(pages[0], sitewide) == {"example.pl/kontakt/", "example.pl/powiazany/"}
 
 
@@ -50,7 +50,7 @@ def test_title_suffix_is_removed():
 
 
 def test_candidates_stay_within_one_language(site):
-    site[1]["lang"] = "en"   # the tyre page is in another language
+    site[1]["lang"] = "en"   # the tyre page belongs to the English version
     home = "Robimy też serwis klimatyzacji samochodowej i wymianę opon zimowych. " + site[0]["text"]
     site[0].update(text=home, blocks=[{"tag": "p", "text": home, "raw": home}])
     rows, _ = find_candidates(site, load_config())
@@ -65,3 +65,20 @@ def test_reject_reason_maps_verdict_when_score_is_low():
     assert pairs.reject_reason(r, CFG) == "wrong_intent"
     r = row("/a", "x y", "/t", 0.4, verdict="ok")
     assert pairs.reject_reason(r, CFG) == "low_score"
+
+
+def test_declared_language_version_wins_and_url_prefix_is_a_fallback(site):
+    from internal_linking.anchors import detect_lang
+    assert detect_lang({**site[0], "lang": "en"}) == "en"   # the declared version, even with Polish text
+    assert detect_lang({**site[0], "lang": "", "url": "https://example.pl/en/page/"}) == "en"
+    assert detect_lang({**site[0], "lang": ""}) == "pl"     # no declaration: the text decides
+
+
+def test_template_links_count_per_language_version():
+    pl = [page(f"https://example.pl/p{i}/", f"Strona {i}", "t", other_links=["example.pl/menu-pl/"]) for i in range(6)]
+    en = [page(f"https://example.pl/en/p{i}/", f"Page {i}", "t", lang="en",
+               other_links=["example.pl/en/sidebar/"] if i < 2 else []) for i in range(4)]
+    sitewide = sitewide_links(pl + en)
+    # the English sidebar link is on half of the English pages - a template link there,
+    # even though it is on only 2 of 10 pages overall
+    assert "example.pl/en/sidebar/" not in already_linked(en[0], sitewide)

@@ -59,3 +59,35 @@ def test_crawl_respects_robots_txt(tmp_path, monkeypatch):
     pages = crawl_mod.crawl("example.pl")
     assert [p["url"] for p in pages] == ["https://example.pl/wpis/"]
     assert read_jsonl(tmp_path / "example.pl" / "pages.jsonl")[0]["url"] == "https://example.pl/wpis/"
+
+
+def test_template_blocks_repeated_across_pages_are_removed():
+    bar = {"tag": "p", "text": "Call us now ¶", "raw": "Call us now +44 20 000", "links": ["example.com/contact/"]}
+    pages = []
+    for i in range(5):
+        own = {"tag": "p", "text": f"Unique article text number {i}.", "raw": f"Unique article text number {i}.",
+               "links": ["example.com/guide/"] if i == 0 else []}
+        pages.append({"url": f"https://example.com/{i}/", "lang": "en", "blocks": [bar, own],
+                      "text": f"Call us now +44 20 000 Unique article text number {i}.", "text_free": "",
+                      "content_links": ["example.com/contact/"] + own["links"], "other_links": []})
+    assert crawl_mod.strip_boilerplate(pages) == 5
+    first = pages[0]
+    assert [b["raw"] for b in first["blocks"]] == ["Unique article text number 0."]
+    assert first["text"] == "Unique article text number 0."
+    assert first["content_links"] == ["example.com/guide/"]        # template link no longer counts as content
+    assert "example.com/contact/" in first["other_links"]
+
+
+def test_small_language_groups_are_left_alone():
+    block = {"tag": "p", "text": "Same text", "raw": "Same text", "links": []}
+    pages = [{"url": f"https://example.com/{i}/", "lang": "pl", "blocks": [block], "text": "Same text",
+              "text_free": "", "content_links": [], "other_links": []} for i in range(3)]
+    assert crawl_mod.strip_boilerplate(pages) == 0
+
+
+def test_block_repeated_on_five_pages_is_template_even_in_a_big_site():
+    bio = {"tag": "p", "text": "Author bio", "raw": "Author bio", "links": []}
+    pages = [{"url": f"https://example.com/{i}/", "lang": "en", "text": "", "text_free": "", "content_links": [],
+              "other_links": [], "blocks": ([bio] if i < 5 else []) + [
+                  {"tag": "p", "text": f"Text {i}", "raw": f"Text {i}", "links": []}]} for i in range(40)]
+    assert crawl_mod.strip_boilerplate(pages) == 5   # 5 of 40 pages is only 12%, still a template

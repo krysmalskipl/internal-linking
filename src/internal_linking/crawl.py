@@ -2,11 +2,13 @@
 
 For every page in the sitemap: title, H1, meta description, language, the main content as text,
 typed content blocks (paragraph, list item, heading...) and internal links - in the content,
-in breadcrumbs and everywhere else (menu, footer, sidebar). Respects robots.txt Disallow rules
-and Crawl-delay for the "internal-linking" user agent.
+in breadcrumbs and everywhere else (menu, footer, sidebar). Template blocks repeated across pages
+are then removed from the content (strip_boilerplate), so any theme works without configuration.
+Respects robots.txt Disallow rules and Crawl-delay for the "internal-linking" user agent.
 """
 import time
 import xml.etree.ElementTree as ET
+from collections import Counter
 from urllib import robotparser
 from urllib.parse import urljoin
 
@@ -22,6 +24,8 @@ LINK_MARK = "¶"  # boundary in block text: an existing link, code, or the end o
 BLOCKS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "td", "th", "dt", "dd", "blockquote", "figcaption"]
 BOILERPLATE = ["script", "style", "noscript", "nav", "header", "footer", "aside", "form", "iframe", "svg"]
 BREADCRUMB_HINTS = ("breadcrumb", "okruszk")
+BOILERPLATE_SHARE = 0.3  # a block repeated on this share of pages (min. 3) is part of the template...
+BOILERPLATE_PAGES = 5    # ...and so is one repeated verbatim on this many pages
 
 session = requests.Session()
 session.headers["User-Agent"] = UA
@@ -143,11 +147,13 @@ def extract(url: str, html: str, domain: str) -> dict:
     # leaf blocks (paragraph, list item, heading...) without nested blocks
     leaves = [b for b in content.find_all(BLOCKS) if not b.find(BLOCKS)]
     raw = [clean_text(b) for b in leaves]
+    leaf_links = [sorted(internal_links(b, url, domain)) for b in leaves]
     # existing link text and code become a separator so they are never proposed as a new anchor;
     # a separator at the end of each block keeps a phrase from spanning a heading and a paragraph
     for a in content.find_all(["a", "pre", "code"]):
         a.replace_with(f" {LINK_MARK} ")
-    blocks = [{"tag": b.name, "text": clean_text(b), "raw": r} for b, r in zip(leaves, raw)]
+    blocks = [{"tag": b.name, "text": clean_text(b), "raw": r, "links": lk}
+              for b, r, lk in zip(leaves, raw, leaf_links)]
     for block in content.find_all(BLOCKS):
         block.append(f" {LINK_MARK} ")
     text_free = clean_text(content)
@@ -156,7 +162,9 @@ def extract(url: str, html: str, domain: str) -> dict:
         b.extract()
     rest = clean_text(content)
     if len(rest.replace(LINK_MARK, " ").split()) >= 5:
-        blocks.append({"tag": "inne", "text": rest, "raw": rest.replace(f" {LINK_MARK} ", " ")})
+        in_leaves = {link for lk in leaf_links for link in lk}
+        blocks.append({"tag": "inne", "text": rest, "raw": rest.replace(f" {LINK_MARK} ", " "),
+                       "links": sorted(content_links - in_leaves)})
     blocks = [b for b in blocks if b["text"].replace(LINK_MARK, "").strip()]
 
     return {
@@ -174,6 +182,42 @@ def extract(url: str, html: str, domain: str) -> dict:
         "breadcrumb_links": sorted(breadcrumb_links),
         "other_links": sorted(all_links - content_links),
     }
+
+
+def block_key(block: dict) -> str:
+    return " ".join(block["raw"].lower().split())
+
+
+def strip_boilerplate(pages: list[dict], share: float = BOILERPLATE_SHARE) -> int:
+    """Removes template blocks - text repeated on many pages of the same language (top bars with a
+    phone number, footers, sidebars, "areas we cover" sections) - from each page's blocks, text and
+    content links. Works on any theme, because it compares pages instead of guessing from tags.
+    Returns the number of blocks removed."""
+    by_lang: dict[str, list[dict]] = {}
+    for p in pages:
+        by_lang.setdefault(p.get("lang", ""), []).append(p)
+    removed = 0
+    for group in by_lang.values():
+        if len(group) < 4:
+            continue  # too few pages to tell a template from content
+        seen = Counter(k for p in group for k in {block_key(b) for b in p["blocks"]})
+        # an identical block on BOILERPLATE_PAGES pages is a template even if it sits in only one
+        # section of the site (e.g. an author bio under every blog post)
+        limit = max(3, min(share * len(group), BOILERPLATE_PAGES))
+        for p in group:
+            keep = [b for b in p["blocks"] if seen[block_key(b)] < limit]
+            if len(keep) == len(p["blocks"]):
+                continue
+            removed += len(p["blocks"]) - len(keep)
+            dropped_links = {lk for b in p["blocks"] if b not in keep for lk in b.get("links", [])}
+            kept_links = {lk for b in keep for lk in b.get("links", [])}
+            gone = dropped_links - kept_links
+            p["blocks"] = keep
+            p["text"] = " ".join(b["raw"] for b in keep)
+            p["text_free"] = f" {LINK_MARK} ".join(b["text"] for b in keep)
+            p["content_links"] = sorted(set(p["content_links"]) - gone)
+            p["other_links"] = sorted(set(p["other_links"]) | gone)
+    return removed
 
 
 def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[dict]:
@@ -210,6 +254,9 @@ def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[d
                   f"{len(page['content_links'])} in content, {len(page['breadcrumb_links'])} in breadcrumbs, "
                   f"{len(page['other_links'])} elsewhere)")
 
+    removed = strip_boilerplate(pages)
+    if removed:
+        print(f"\ntemplate blocks removed from content (repeated across pages): {removed}")
     out = data_dir(domain) / "pages.jsonl"
     write_jsonl(out, pages)
     print(f"\nsaved {len(pages)} pages → {out}")

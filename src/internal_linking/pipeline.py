@@ -16,7 +16,7 @@ from . import keywords as kw
 from .anchors import AnchorFinder, content_words, detect_lang
 from .common import append_jsonl, data_dir, norm_url, read_jsonl, write_csv
 from .config import load_config
-from .crawl import crawl
+from .crawl import BOILERPLATE_SHARE, crawl, strip_boilerplate
 from .jev import pairs
 from .jev.client import JevError
 from .report import write_report
@@ -34,7 +34,7 @@ def site_suffixes(pages: list[dict]) -> set[str]:
         m = re.search(r"\s[-–|]\s[^-–|]+$", p["title"])
         if m:
             c[m.group(0)] += 1
-    return {s for s, n in c.items() if n >= max(3, 0.3 * len(pages))}
+    return {s for s, n in c.items() if n >= max(3, 0.1 * len(pages))}
 
 
 def clean_title(title: str, suffixes: set[str]) -> str:
@@ -44,21 +44,30 @@ def clean_title(title: str, suffixes: set[str]) -> str:
     return title
 
 
-def sitewide_links(pages: list[dict]) -> set[str]:
-    """Links outside the content present on at least half of the pages - menu and footer."""
-    c = Counter(link for p in pages for link in p.get("other_links", []))
-    return {link for link, n in c.items() if n >= 0.5 * len(pages)}
+def sitewide_links(pages: list[dict]) -> dict[str, set[str]]:
+    """Per language version: links outside the content repeated on many of its pages - menu, footer,
+    sidebars and other template blocks (same share as the crawler's template detection)."""
+    by_lang: dict[str, list[dict]] = {}
+    for p in pages:
+        by_lang.setdefault(p.get("lang", ""), []).append(p)
+    out = {}
+    for lang, group in by_lang.items():
+        c = Counter(link for p in group for link in set(p.get("other_links", [])))
+        out[lang] = {link for link, n in c.items() if n >= max(2, BOILERPLATE_SHARE * len(group))}
+    return out
 
 
-def already_linked(src: dict, sitewide: set[str]) -> set[str]:
+def already_linked(src: dict, sitewide: dict[str, set[str]]) -> set[str]:
     """Targets the page already links to: in content, in breadcrumbs and in blocks specific to this
-    page (e.g. related posts). Menu and footer links don't count - a content link is worth more."""
-    local = set(src.get("other_links", [])) - sitewide
+    page (e.g. related posts). Template links (menu, footer, sidebars) don't count - a content link
+    is worth more."""
+    local = set(src.get("other_links", [])) - sitewide.get(src.get("lang", ""), set())
     return set(src["content_links"]) | set(src.get("breadcrumb_links", [])) | local
 
 
 def prepare(pages: list[dict], cfg: dict) -> dict:
     """Shared per-site data for both modes. Pages in unsupported languages are left out."""
+    strip_boilerplate(pages)  # idempotent; also cleans pages.jsonl saved by an older version
     for p in pages:
         p["lang"] = detect_lang(p)
     skipped_lang = sum(not p["lang"] for p in pages)
@@ -96,7 +105,7 @@ def make_rows(site: dict, anchors: dict, keyword_of: dict | None = None) -> list
             "target_url": pages[j]["url"], "target_title": titles[j],
             "anchor": phrase, "anchor_type": kind, "placement": pairs.PLACEMENT.get(blocks[b]["tag"], "other"),
             "context": pairs.context(blocks[b], phrase),
-            "in_menu": int(norm_url(pages[j]["url"]) in site["sitewide"]),
+            "in_menu": int(norm_url(pages[j]["url"]) in site["sitewide"].get(lang, set())),
             "_state": pairs.build_state(pages[i], titles[i], blocks, b, pages[j], titles[j], phrase, lang),
         }
         if keyword_of is not None:
@@ -161,9 +170,9 @@ def keyword_candidates(pages: list[dict], cfg: dict, keywords: list[dict]) -> tu
             if found and (k["match"] == "partial" or found[1] == "exact"):
                 anchors[(i, j)] = found
                 keyword_of[(i, j)] = k["keyword"]
-    template = drop_template_phrases(anchors, cfg, len(sources))
-    info = {"keywords": len(keywords), "resolved": len(resolved), "sources": len(sources),
-            "template phrases": template}
+    # no template-phrase rule here: the keywords are chosen on purpose, and template blocks are
+    # already stripped by the crawler, so a keyword repeated across many pages is a real use
+    info = {"keywords": len(keywords), "resolved": len(resolved), "sources": len(sources)}
     return make_rows(site, anchors, keyword_of), info, resolved
 
 
