@@ -1,26 +1,27 @@
-"""Krok 1: sitemap.xml → data/<domena>/pages.jsonl (zwykle wołany przez run.py)
+"""Sitemap crawl → data/<domain>/pages.jsonl.
 
-Dla każdej strony z sitemapy zapisuje tytuł, h1, meta description, treść główną, bloki treści
-z typem (akapit, punkt listy, nagłówek...) oraz linki wewnętrzne: w treści, w okruszkach
-i wszystkie pozostałe (menu, stopka, sidebar).
-
-  python crawl.py --domain example.com
+For every page in the sitemap: title, H1, meta description, language, the main content as text,
+typed content blocks (paragraph, list item, heading...) and internal links - in the content,
+in breadcrumbs and everywhere else (menu, footer, sidebar). Respects robots.txt Disallow rules
+and Crawl-delay for the "internal-linking" user agent.
 """
-import argparse
 import time
 import xml.etree.ElementTree as ET
+from urllib import robotparser
 from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
-from common import data_dir, is_internal, norm_url, write_jsonl
+from .common import data_dir, is_internal, norm_url, write_jsonl
 
-UA = "Mozilla/5.0 (compatible; internal-linking-audit/1.0)"
+ROBOTS_AGENT = "internal-linking"
+UA = f"Mozilla/5.0 (compatible; {ROBOTS_AGENT}/0.1; +https://github.com/krysmalskipl/internal-linking)"
 NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
-LINK_MARK = "¶"  # granica w text_free: istniejący link, kod albo koniec bloku
+LINK_MARK = "¶"  # boundary in block text: an existing link, code, or the end of a block
 BLOCKS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "td", "th", "dt", "dd", "blockquote", "figcaption"]
 BOILERPLATE = ["script", "style", "noscript", "nav", "header", "footer", "aside", "form", "iframe", "svg"]
+BREADCRUMB_HINTS = ("breadcrumb", "okruszk")
 
 session = requests.Session()
 session.headers["User-Agent"] = UA
@@ -34,6 +35,16 @@ def fetch(url: str) -> requests.Response | None:
         return None
 
 
+def load_robots(base: str) -> tuple[robotparser.RobotFileParser, list[str]]:
+    """robots.txt rules and the sitemaps it declares; a missing robots.txt allows everything."""
+    rp = robotparser.RobotFileParser()
+    r = fetch(f"{base}/robots.txt")
+    text = r.text if r is not None and r.ok else ""
+    rp.parse(text.splitlines())
+    sitemaps = [ln.split(":", 1)[1].strip() for ln in text.splitlines() if ln.lower().startswith("sitemap:")]
+    return rp, sitemaps
+
+
 def parse_sitemap(xml: bytes) -> ET.Element | None:
     try:
         root = ET.fromstring(xml)
@@ -42,18 +53,13 @@ def parse_sitemap(xml: bytes) -> ET.Element | None:
     return root if root.tag in (f"{NS}urlset", f"{NS}sitemapindex") else None
 
 
-def find_sitemap(base: str) -> str:
-    candidates = []
-    r = fetch(f"{base}/robots.txt")
-    if r is not None and r.ok:
-        candidates += [ln.split(":", 1)[1].strip() for ln in r.text.splitlines()
-                       if ln.lower().startswith("sitemap:")]
-    candidates += [f"{base}/sitemap.xml", f"{base}/sitemap_index.xml", f"{base}/wp-sitemap.xml"]
+def find_sitemap(base: str, declared: list[str]) -> str:
+    candidates = declared + [f"{base}/sitemap.xml", f"{base}/sitemap_index.xml", f"{base}/wp-sitemap.xml"]
     for url in candidates:
         r = fetch(url)
         if r is not None and r.ok and parse_sitemap(r.content) is not None:
             return url
-    raise SystemExit(f"Nie znaleziono sitemapy dla {base} (sprawdzone: {', '.join(candidates)})")
+    raise RuntimeError(f"no sitemap found for {base} (tried: {', '.join(candidates)})")
 
 
 def sitemap_urls(url: str, seen: set[str] | None = None) -> list[str]:
@@ -64,7 +70,7 @@ def sitemap_urls(url: str, seen: set[str] | None = None) -> list[str]:
     r = fetch(url)
     root = parse_sitemap(r.content) if r is not None and r.ok else None
     if root is None:
-        print(f"  ! pominięto sitemapę {url}")
+        print(f"  ! skipped sitemap {url}")
         return []
     locs = [el.text.strip() for el in root.iter(f"{NS}loc") if el.text]
     if root.tag == f"{NS}sitemapindex":
@@ -82,11 +88,11 @@ def meta(soup: BeautifulSoup, name: str) -> str:
 
 
 def main_content(soup: BeautifulSoup):
-    """<main> (lub <body>), chyba że jeden <article> zawiera większość jego tekstu - wtedy ten
-    <article>. Chroni przed wybraniem kafelka z listy wpisów jako treści strony."""
+    """<main> (or <body>), unless a single <article> holds most of its text - then that <article>.
+    Avoids picking a post card from a listing as the page content."""
     body = soup.body or soup
     main = soup.find("main")
-    # niektóre motywy mają pusty <main>, a artykuł obok niego
+    # some themes render an empty <main> with the article next to it
     body_len = len(body.get_text(" ", strip=True))
     container = main if main and len(main.get_text(" ", strip=True)) >= 0.3 * body_len else body
     total = len(container.get_text(" ", strip=True)) or 1
@@ -96,9 +102,6 @@ def main_content(soup: BeautifulSoup):
         if len(best.get_text(" ", strip=True)) >= 0.5 * total:
             return best
     return container
-
-
-BREADCRUMB_HINTS = ("breadcrumb", "okruszk")
 
 
 def is_breadcrumb(tag) -> bool:
@@ -122,8 +125,11 @@ def extract(url: str, html: str, domain: str) -> dict:
     canonical = soup.find("link", rel="canonical")
     title = soup.title.get_text(strip=True) if soup.title else ""
     h1 = soup.find("h1")
+    h1 = h1.get_text(" ", strip=True) if h1 else ""  # read now - block separators are added below
+    html_tag = soup.find("html")
+    lang = (html_tag.get("lang") or "").split("-")[0].lower() if html_tag else ""
 
-    # linki spoza treści zbieramy przed wycięciem nawigacji z kontenera treści
+    # links outside the content are collected before navigation is stripped from the content
     all_links = internal_links(soup, url, domain)
     breadcrumb_links = set()
     for bc in soup.find_all(is_breadcrumb):
@@ -134,18 +140,18 @@ def extract(url: str, html: str, domain: str) -> dict:
         tag.decompose()
     content_links = internal_links(content, url, domain)
     text = clean_text(content)
-    # bloki-liście (akapit, punkt listy, nagłówek...) bez zagnieżdżonych bloków
+    # leaf blocks (paragraph, list item, heading...) without nested blocks
     leaves = [b for b in content.find_all(BLOCKS) if not b.find(BLOCKS)]
     raw = [clean_text(b) for b in leaves]
-    # tekst istniejących linków i kodu zastępujemy separatorem, żeby nie proponować go jako nowego
-    # anchora; separator na końcu bloków nie pozwala frazie przejść z nagłówka do akapitu
+    # existing link text and code become a separator so they are never proposed as a new anchor;
+    # a separator at the end of each block keeps a phrase from spanning a heading and a paragraph
     for a in content.find_all(["a", "pre", "code"]):
         a.replace_with(f" {LINK_MARK} ")
     blocks = [{"tag": b.name, "text": clean_text(b), "raw": r} for b, r in zip(leaves, raw)]
     for block in content.find_all(BLOCKS):
         block.append(f" {LINK_MARK} ")
     text_free = clean_text(content)
-    # tekst poza blokami (np. goły tekst w <div>) jako jeden blok "inne"
+    # text outside blocks (e.g. bare text in a <div>) becomes one "inne" (other) block
     for b in leaves:
         b.extract()
     rest = clean_text(content)
@@ -153,13 +159,11 @@ def extract(url: str, html: str, domain: str) -> dict:
         blocks.append({"tag": "inne", "text": rest, "raw": rest.replace(f" {LINK_MARK} ", " ")})
     blocks = [b for b in blocks if b["text"].replace(LINK_MARK, "").strip()]
 
-    html_tag = soup.find("html")
-    lang = (html_tag.get("lang") or "").split("-")[0].lower() if html_tag else ""
     return {
         "url": url,
         "lang": lang,
         "title": title,
-        "h1": h1.get_text(" ", strip=True) if h1 else "",
+        "h1": h1,
         "meta": meta(soup, "description"),
         "robots": meta(soup, "robots").lower(),
         "canonical": urljoin(url, canonical["href"]) if canonical and canonical.get("href") else url,
@@ -173,22 +177,27 @@ def extract(url: str, html: str, domain: str) -> dict:
 
 
 def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[dict]:
-    """Pobiera strony z sitemapy i zapisuje data/<domena>/pages.jsonl."""
+    """Downloads the sitemap pages and writes data/<domain>/pages.jsonl."""
     base = f"https://{domain.removeprefix('https://').removeprefix('http://').strip('/')}"
-    sitemap = sitemap or find_sitemap(base)
-    print(f"sitemapa: {sitemap}")
+    robots, declared = load_robots(base)
+    delay = max(delay, float(robots.crawl_delay(ROBOTS_AGENT) or 0))
+    sitemap = sitemap or find_sitemap(base, declared)
+    print(f"sitemap: {sitemap}")
     urls = list(dict.fromkeys(sitemap_urls(sitemap)))
-    print(f"URL-i w sitemapie: {len(urls)}")
+    print(f"URLs in sitemap: {len(urls)}")
 
     pages, skipped = [], {}
     for i, url in enumerate(urls, 1):
+        if not robots.can_fetch(ROBOTS_AGENT, url):
+            skipped[url] = "disallowed by robots.txt"
+            continue
         r = fetch(url)
         time.sleep(delay)
         if r is None or r.status_code != 200:
-            skipped[url] = f"status {getattr(r, 'status_code', 'błąd')}"
+            skipped[url] = f"status {getattr(r, 'status_code', 'error')}"
             continue
         if norm_url(r.url) != norm_url(url):
-            skipped[url] = f"przekierowanie na {r.url}"
+            skipped[url] = f"redirects to {r.url}"
             continue
         page = extract(url, r.text, domain)
         if "noindex" in page["robots"]:
@@ -197,28 +206,23 @@ def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[d
             skipped[url] = f"canonical → {page['canonical']}"
         else:
             pages.append(page)
-            print(f"[{i}/{len(urls)}] {url}  ({len(page['text'].split())} słów, "
-                  f"linki: {len(page['content_links'])} w treści, {len(page['breadcrumb_links'])} w okruszkach, "
-                  f"{len(page['other_links'])} poza treścią)")
+            print(f"[{i}/{len(urls)}] {url}  ({len(page['text'].split())} words, links: "
+                  f"{len(page['content_links'])} in content, {len(page['breadcrumb_links'])} in breadcrumbs, "
+                  f"{len(page['other_links'])} elsewhere)")
 
     out = data_dir(domain) / "pages.jsonl"
     write_jsonl(out, pages)
-    print(f"\nZapisano {len(pages)} stron → {out}")
+    print(f"\nsaved {len(pages)} pages → {out}")
     if skipped:
-        print(f"Pominięto {len(skipped)}:")
+        print(f"skipped {len(skipped)}:")
         for url, why in skipped.items():
             print(f"  - {url}: {why}")
     return pages
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--domain", required=True, help="np. example.com")
-    ap.add_argument("--sitemap", help="adres sitemapy, jeśli nie ma jej w robots.txt")
-    ap.add_argument("--delay", type=float, default=0.5, help="przerwa między zapytaniami (s)")
-    args = ap.parse_args()
-    crawl(args.domain, args.sitemap, args.delay)
-
-
-if __name__ == "__main__":
-    main()
+def add_parser(sub) -> None:
+    p = sub.add_parser("crawl", help="download the sitemap pages only (run does this too)")
+    p.add_argument("--domain", required=True, help="e.g. example.com")
+    p.add_argument("--sitemap", help="sitemap URL, if robots.txt does not declare one")
+    p.add_argument("--delay", type=float, default=0.5, help="seconds between requests")
+    p.set_defaults(func=lambda args: crawl(args.domain, args.sitemap, args.delay))

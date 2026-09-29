@@ -1,20 +1,20 @@
-"""Raport HTML z linkami do wstawienia - jeden samodzielny plik, niezależny od CMS."""
+"""HTML report with links to insert - one self-contained, CMS-agnostic file."""
 import html
 from collections import defaultdict
 from datetime import date
 from urllib.parse import urlsplit
 
 REASONS = {
-    "kanibalizacja": "fraza opisuje temat strony źródłowej",
-    "temat_niezwiazany": "fragment dotyczy innego tematu niż cel",
-    "slaby_anchor": "fraza nie jest naturalnym tekstem linku",
-    "fraza_ogolna": "fraza zbyt ogólna",
-    "inna_intencja": "czytelnik szuka tu innego typu strony",
-    "nawigacja_szablon": "lista, nawigacja albo powtarzalny blok",
-    "niska_ocena": "za niska ocena Jev",
-    "limit": "limit linków na stronę - były lepsze propozycje",
-    "duplikat_frazy": "ta fraza niesie już lepszy link",
-    "brak_oceny": "Jev nie ocenił pary (błąd API)",
+    "cannibalisation": "the phrase describes the source page's own topic",
+    "off_topic": "the passage is about something other than the target",
+    "weak_anchor": "the phrase is not natural link text",
+    "too_generic": "the phrase is too generic",
+    "wrong_intent": "the reader expects a different kind of page here",
+    "navigation_or_template": "list, navigation or repeated block",
+    "low_score": "Jev score below the threshold",
+    "limit": "per-page link limit - better suggestions won",
+    "duplicate_phrase": "this phrase already carries a better link",
+    "not_judged": "Jev did not judge the pair (API error)",
 }
 
 CSS = """
@@ -53,32 +53,32 @@ def write_report(path, domain: str, accepted: list[dict], rejected: list[dict], 
     for r in accepted:
         by_page[(r["source_url"], r["source_title"])].append(r)
     e = html.escape
-    parts = [f"<!doctype html><html lang='pl'><head><meta charset='utf-8'>"
+    parts = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
              f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-             f"<title>Linki wewnętrzne - {e(domain)}</title><style>{CSS}</style></head><body><main>",
-             f"<h1>Linki wewnętrzne do wstawienia</h1>"
+             f"<title>Internal links - {e(domain)}</title><style>{CSS}</style></head><body><main>",
+             f"<h1>Internal links to insert</h1>"
              f"<p class='sub'>{e(domain)} · {date.today().isoformat()}</p><div class='stats'>"]
     for label, value in stats.items():
         parts.append(f"<div class='stat'><b>{e(str(value))}</b>{e(label)}</div>")
     parts.append("</div>")
     if not accepted:
-        parts.append("<p>Brak linków spełniających progi.</p>")
+        parts.append("<p>No links pass the thresholds.</p>")
     for (url, title), links in sorted(by_page.items(), key=lambda kv: -len(kv[1])):
         parts.append(f"<section class='page'><h2>{e(title)}</h2>"
                      f"<div class='url'><a href='{e(url)}'>{e(urlsplit(url).path or '/')}</a></div>")
         for r in links:
             parts.append(
-                f"<div class='link'><div class='meta'>{e(r['miejsce'])} · fraza "
-                f"<b>„{e(r['anchor'])}”</b> ({e(r['anchor_type'])}) → "
+                f"<div class='link'><div class='meta'>{e(r['placement'])} · phrase "
+                f"<b>“{e(r['anchor'])}”</b> ({e(r['anchor_type'])}) → "
                 f"<a href='{e(r['target_url'])}'>{e(r['target_title'])}</a></div>"
-                f"<div class='ctx'>{_ctx(r['kontekst'], r['anchor'])}</div>"
-                f"<div class='meta'>ocena {float(r['score']):.2f} · kontekst {float(r['jev_kontekst']):.2f} · "
+                f"<div class='ctx'>{_ctx(r['context'], r['anchor'])}</div>"
+                f"<div class='meta'>score {float(r['score']):.2f} · context {float(r['jev_context']):.2f} · "
                 f"anchor {float(r['jev_anchor']):.2f} · {e(urlsplit(r['target_url']).path)}</div></div>")
         parts.append("</section>")
     if rejected:
-        parts.append(f"<details><summary>Odrzucone propozycje ({len(rejected)})</summary>")
+        parts.append(f"<details><summary>Rejected suggestions ({len(rejected)})</summary>")
         for r in sorted(rejected, key=lambda r: r["source_url"]):
-            parts.append(f"<div class='rej'>{e(urlsplit(r['source_url']).path)} · „{e(r['anchor'])}” → "
+            parts.append(f"<div class='rej'>{e(urlsplit(r['source_url']).path)} · “{e(r['anchor'])}” → "
                          f"{e(urlsplit(r['target_url']).path)} · <span class='why'>"
                          f"{e(REASONS.get(r['decision_reason'], r['decision_reason']))}</span></div>")
         parts.append("</details>")

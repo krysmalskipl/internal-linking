@@ -1,31 +1,31 @@
-"""Szukanie w treści źródła frazy, na którą można wstawić link do danego celu.
+"""Finds phrases in a source page that can carry a link to a given target page.
 
-Słowa porównujemy z uwzględnieniem odmiany: pasują, jeśli mają wspólny początek długości
-co najmniej 4 i po nim najwyżej 3 litery końcówki, więc
-"wymianie opon zimowych" pasuje do celu "Wymiana opon zimowych".
+Words are compared inflection-aware (tuned for Polish): they match if they share a prefix of at
+least 4 letters followed by an ending of at most 3 letters, so "wymianie opon zimowych" matches
+the target "Wymiana opon zimowych".
 
-- exact:   fraza pokrywa wszystkie słowa kluczowe celu (z tytułu, h1 albo sluga)
-- partial: fraza zawiera co najmniej 2 słowa celu, w tym jedno charakterystyczne
-Pojedyncze słowa ("usług", "kontakt") nie są anchorami. Tekst istniejących linków jest w treści
-zastąpiony separatorem (crawl.py → blocks), więc fraza nigdy go nie obejmuje. Nie linkujemy
-z nagłówków ani nagłówków tabel.
+- exact:   the phrase covers all keywords of the target (from its title, H1 or slug)
+- partial: the phrase contains at least 2 target words, including a distinctive one
+Single words ("usług", "kontakt") are never anchors. Existing link text is replaced by a separator
+in the content blocks (see crawl.py), so a phrase never overlaps it. Headings are never used.
 """
 import re
 import unicodedata
 from collections import Counter
 from urllib.parse import urlsplit
 
+# Polish function words plus generic blog-title fillers - never keywords
 STOPWORDS = set("""a aby ale bez by być co czy dla do i ich jak jaki jest jej jego już
 ku lub ma może na nad nie o od oraz po pod przez przy się są ta tak te to tu w we z za ze
 że czym jakie która który które twoja twojej twoje moje mój dlaczego warto nadal mam kiedy
 gdzie ile jaka jakich twój czyli bardzo można
 poradnik poradniku przewodnik przewodnika kompletny kompletna kompletne praktyczny praktyczna
 praktyczne praktyce wdrożenie wdrożenia krok kroku roku sposób sposoby najlepsze lista powodów
-powody""".split())  # ogólniki i wypełniacze tytułów blogowych
+powody""".split())
 MAX_WORDS = 6
-MAX_GAP = 2                # maks. słów pomocniczych z rzędu wewnątrz frazy
-COMMON_SHARE = 0.8
-TITLE_SHARE = 0.1
+MAX_GAP = 2                # max consecutive function words inside a phrase
+COMMON_SHARE = 0.8         # words on more pages than this share distinguish nothing
+TITLE_SHARE = 0.1          # words in this share of titles (min. 3) are not distinctive
 SENTENCE_END = (".", "!", "?", ";", ":", "…")
 PUNCT = ".,;:!?()[]\"'„”«»…"
 NO_LINK_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "th"}
@@ -49,7 +49,7 @@ def content_words(text: str) -> list[str]:
 
 
 def same_word(a: str, b: str) -> bool:
-    """Te same słowa w innej odmianie: wspólny początek ≥ 4, a końcówki najwyżej 3-literowe."""
+    """Same word in another inflected form: shared prefix ≥ 4, endings of at most 3 letters."""
     if a == b:
         return True
     p = 0
@@ -62,27 +62,26 @@ def same_word(a: str, b: str) -> bool:
 
 class AnchorFinder:
     def __init__(self, pages: list[dict]):
-        # słowa (po 5 literach) obecne prawie na każdej stronie (nazwa serwisu, podpis autora)
-        # nie wyróżniają żadnego celu; słowa kluczowe usług bywają na połowie stron i muszą zostać
+        # words (first 5 letters) present on almost every page (site name, author byline) do not
+        # distinguish any target; service keywords may appear on half the pages and must stay
         c = Counter()
         for p in pages:
             c.update({fold(w)[:5] for w in words(p["text"])})
         self.common = {s for s, n in c.items() if n > COMMON_SHARE * len(pages)}
-        # słowa z wielu tytułów (np. "seo", "google") nie wyróżniają jednego celu
+        # words from many titles (e.g. "seo", "google") do not single out one target
         t = Counter()
         for p in pages:
             t.update({w[:5] for w in content_words(f"{p['title']} {p['h1']}")})
         self.common |= {s for s, n in t.items() if n >= max(3, TITLE_SHARE * len(pages))}
-
         self._profiles: dict[tuple, tuple] = {}
 
     def profile(self, target_title: str, target_h1: str, target_url: str) -> tuple:
-        """Słowa kluczowe celu (tytuł, h1, slug) - liczone raz na cel."""
+        """Target keywords (title, H1, slug) - computed once per target."""
         key = (target_title, target_h1, target_url)
         if key not in self._profiles:
             slug = urlsplit(target_url).path.rstrip("/").rsplit("/", 1)[-1].replace("-", " ")
-            vocab: list[str] = []            # słowa kluczowe celu
-            keyphrases: list[set[int]] = []  # tytuł / h1 / slug jako zbiory indeksów w vocab
+            vocab: list[str] = []            # target keywords
+            keyphrases: list[set[int]] = []  # title / H1 / slug as sets of indices into vocab
             for text in (target_title, target_h1, slug):
                 idx = set()
                 for w in content_words(text):
@@ -99,8 +98,8 @@ class AnchorFinder:
 
     def find_in_blocks(self, blocks: list[dict], src_title: str, target_title: str, target_h1: str,
                        target_url: str) -> tuple[str, str, int] | None:
-        """Najlepsza fraza w blokach treści (exact przed partial, wcześniejszy blok przed późniejszym):
-        (fraza, 'exact' | 'partial', indeks bloku) albo None. Nagłówki są pomijane."""
+        """Best phrase across content blocks (exact before partial, earlier block first):
+        (phrase, 'exact' | 'partial', block index) or None. Headings are skipped."""
         best = None
         for n, b in enumerate(blocks):
             if b["tag"] in NO_LINK_BLOCKS:
@@ -114,7 +113,7 @@ class AnchorFinder:
 
     def find(self, src_text: str, src_title: str, target_title: str, target_h1: str,
              target_url: str) -> tuple[str, str] | None:
-        """Zwraca (fraza, 'exact' | 'partial') albo None, jeśli w tekście nie ma pasującej frazy."""
+        """(phrase, 'exact' | 'partial') or None when the text has no matching phrase."""
         vocab, keyphrases, distinctive = self.profile(target_title, target_h1, target_url)
         if not vocab:
             return None
@@ -142,22 +141,25 @@ class AnchorFinder:
                 if not is_filler(w):
                     k = match(w)
                     if k is None:
-                        break  # każde słowo treściowe frazy musi pochodzić z celu
+                        break  # every content word of the phrase must come from the target
                     hits.add(k)
                     enough = len(hits) >= 2
-                    # fraza opisująca samą stronę źródłową (np. "rower" na stronie o rowerach
-                    # elektrycznych) prowadziłaby do kanibalizacji - pomijamy
+                    # a phrase describing the source page itself (e.g. "bikes" on a page about
+                    # e-bikes) would cannibalise it - skip
                     about_source = all(any(same_word(vocab[h], o) for o in own) for h in hits)
-                    exact = any(k <= hits for k in keyphrases)
-                    # pełna nazwa celu jest konkretna sama w sobie; partial potrzebuje słowa
-                    # charakterystycznego, żeby nie łapać ogólników
+                    # the longest target name (title, H1 or slug) fully covered by the phrase
+                    covered = max((k for k in keyphrases if k <= hits), key=len, default=set())
+                    exact = bool(covered)
+                    # a target's full name is specific on its own; a partial match needs a
+                    # distinctive word so generic phrases are not picked up
                     if enough and (exact or hits & distinctive) and not about_source:
-                        score = (exact, len(hits & distinctive), len(hits), -(j - i))
+                        # longest covered name first, then no words beyond it
+                        # ("Google Search Console", not "Google Search Console using")
+                        extra = len(hits - covered) if exact else 0
+                        score = (len(covered), -extra, len(hits & distinctive), len(hits), -(j - i))
                         if best_score is None or score > best_score:
                             best = (" ".join(tokens[i:j + 1]).strip(PUNCT), "exact" if exact else "partial")
                             best_score = score
-                        if exact:
-                            break  # nie wydłużamy frazy, która już pokrywa całą nazwę celu
                 if tokens[j].endswith(SENTENCE_END + (",",)):
                     break
         return best

@@ -1,16 +1,16 @@
-"""Ocena pojedynczej pary (strona źródłowa, fraza, cel) przez Jev - "jev mode".
+"""Judges a single (source page, phrase, target) pair with Jev - "jev mode".
 
-Wzorowane na relevance-coarse-filter z newsjack: zamiast jednego pytania "wybierz najlepszy cel
-z listy" (prawdopodobieństwa rozkładają się wtedy na wszystkie opcje) każda para dostaje osobne
-wywołanie z kilkoma pytaniami zamkniętymi. Typ bloku (akapit, lista...) liczymy z HTML i podajemy
-jako fakt. Na odpowiedzi nakładamy twarde reguły (progi w config.json), a decyzja niesie kod powodu.
+Modelled on relevance-coarse-filter from newsjack: instead of one "pick the best target from the
+list" question per page (probabilities then spread across all options), every pair gets its own
+call with a few closed questions. The block type (paragraph, list...) is computed from the HTML
+and passed as a fact. Hard rules on the answers (thresholds in config.json) produce a reason code.
 
-  python jev_pairs.py --print-questions     # podgląd pytań wysyłanych do Jev
+The questions are in Polish on purpose: the tool targets Polish-language sites.
 """
 import hashlib
 import json
 
-from jev_client import decide
+from .client import decide
 
 QUESTIONS = {
     "kontekst": {
@@ -76,7 +76,7 @@ CONTEXT_CHARS = 600
 
 
 def context(block: dict, phrase: str) -> str:
-    """Blok (akapit, punkt listy) z frazą, przycięty do ~600 znaków wokół frazy."""
+    """The block (paragraph, list item) holding the phrase, trimmed to ~600 characters around it."""
     raw = block.get("raw") or block["text"]
     i = raw.lower().find(phrase.lower())
     if i < 0 or len(raw) <= CONTEXT_CHARS:
@@ -106,36 +106,41 @@ def judge(state: dict) -> dict:
     return decide(state, QUESTIONS)
 
 
+# Jev verdict keys (Polish, part of the questions) → English reason codes in the output
+VERDICTS = {"ok": "ok", "temat_niezwiazany": "off_topic", "fraza_ogolna": "too_generic",
+            "kanibalizacja": "cannibalisation", "inna_intencja": "wrong_intent",
+            "nawigacja_szablon": "navigation_or_template"}
+# HTML block tag → placement label in the output
+PLACEMENT = {"p": "paragraph", "li": "list item", "td": "table cell", "dd": "definition", "dt": "term",
+             "blockquote": "quote", "figcaption": "caption", "inne": "other"}
+
+
 def summarize(resp: dict) -> dict:
-    """Odpowiedź Jev → kolumny CSV. `score` = P(ocena "ok"), najlepszy sygnał na ręcznych ocenach."""
+    """Jev answer → CSV columns. `score` = P(verdict "ok"), the strongest signal on hand labels."""
     a = resp["answers"]
-    p_ok = a["powod"]["probabilities"].get("ok", 0)
     return {
-        "score": round(p_ok, 3),
-        "jev_kontekst": round(a["kontekst"]["noul"], 3),
+        "score": round(a["powod"]["probabilities"].get("ok", 0), 3),
+        "jev_context": round(a["kontekst"]["noul"], 3),
         "jev_anchor": round(a["anchor"]["noul"], 3),
-        "jev_wartosc": round(a["wartosc"]["score"] / 4, 3),  # 0..1
-        "jev_kanibalizacja": round(a["kanibalizacja"]["noul"], 3),
-        "jev_powod": a["powod"]["choice"],
+        "jev_value": round(a["wartosc"]["score"] / 4, 3),  # 0..1
+        "jev_cannibalisation": round(a["kanibalizacja"]["noul"], 3),
+        "jev_verdict": VERDICTS.get(a["powod"]["choice"], a["powod"]["choice"]),
     }
 
 
 def reject_reason(row: dict, cfg: dict) -> str:
-    """Twarde reguły na odpowiedziach Jev (progi z config.json); pusty napis = para przechodzi."""
-    if row["jev_kanibalizacja"] >= cfg["kanibalizacja_max"]:
-        return "kanibalizacja"
-    if row["jev_kontekst"] < cfg["kontekst_min"]:
-        return "temat_niezwiazany"
+    """Hard rules on Jev answers (thresholds from config.json); empty string = the pair passes."""
+    if row["jev_cannibalisation"] >= cfg["cannibalisation_max"]:
+        return "cannibalisation"
+    if row["jev_context"] < cfg["context_min"]:
+        return "off_topic"
     if row["jev_anchor"] < cfg["anchor_min"]:
-        return "slaby_anchor"
+        return "weak_anchor"
     if row["score"] < cfg["score_min"]:
-        return row["jev_powod"] if row["jev_powod"] != "ok" else "niska_ocena"
+        return row["jev_verdict"] if row["jev_verdict"] != "ok" else "low_score"
     return ""
 
 
-if __name__ == "__main__":
-    import sys
-    if "--print-questions" in sys.argv:
-        print(json.dumps(QUESTIONS, ensure_ascii=False, indent=2))
-    else:
-        print(__doc__)
+def add_parser(sub) -> None:
+    p = sub.add_parser("questions", help="print the questions sent to Jev for every pair")
+    p.set_defaults(func=lambda args: print(json.dumps(QUESTIONS, ensure_ascii=False, indent=2)))

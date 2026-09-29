@@ -1,12 +1,15 @@
-# środowisko
+# environment
 .venv/
 __pycache__/
+*.egg-info/
+.pytest_cache/
 .env
 
-# lokalna konfiguracja Claude Code (zawiera domenę klienta)
+# local Claude Code config
 .claude/
 
-# dane i wyniki - crawl, odpowiedzi Jev, rekomendacje, próbki, oceny
+# local threshold overrides and results (crawled pages, Jev answers, reports, labels)
+/config.json
 data/
 *.csv
 *.jsonl

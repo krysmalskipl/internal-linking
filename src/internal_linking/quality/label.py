@@ -1,24 +1,22 @@
-"""Ocena próbki w przeglądarce zamiast w arkuszu.
+"""Quality check, step 2: label the sample in the browser instead of a spreadsheet.
 
-Pokazuje po kolei propozycje z sample_to_label.csv jako pytanie "czy na stronie X dodać link
-do strony Y?" z przyciskami Tak / Nie / Pomiń. Każda odpowiedź od razu zapisuje się w CSV.
-
-  python label.py --domain example.com     # potem http://localhost:8765
+Shows the suggestions from sample_to_label.csv one by one as "add a link from page X to page Y?"
+with Yes / No / Skip buttons. Every answer is written to the CSV immediately. The server listens
+on 127.0.0.1 only.
 """
-import argparse
 import html
 import json
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from common import data_dir, read_csv, read_jsonl, write_csv
+from ..common import data_dir, read_csv, read_jsonl, write_csv
 
 FIELDS = ["ok", "score", "source_title", "target_title", "anchor", "anchor_type", "in_menu",
-          "source_url", "target_url", "rank"]
+          "source_url", "target_url"]
 
 PAGE = """<!doctype html>
-<html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ocena linków</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Label links</title>
 <style>
 :root { --bg:#f6f5f2; --card:#fff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e3e1dc; --accent:#2f6fde;
         --yes:#1f8a4c; --no:#c2412d; --mark:#fff2a8; }
@@ -46,8 +44,8 @@ button { font:inherit; font-weight:600; border:0; border-radius:10px; padding:12
 .help { color:var(--muted); font-size:14px; margin:0 0 18px }
 .done { text-align:center; padding:40px 22px }
 </style></head><body><main>
-<p class="help">Oceń, czy proponowany link ma sens dla czytelnika. <b>Tak</b> = sam byś go wstawił.
-<b>Nie</b> = temat niezwiązany albo link nic nie wnosi. Skróty klawiszowe: T / N / spacja (pomiń).</p>
+<p class="help">Would the suggested link help the reader? <b>Yes</b> = you would add it yourself.
+<b>No</b> = unrelated topic or the link adds nothing. Shortcuts: Y / N / space (skip).</p>
 <div class="top"><span id="count"></span><span id="stat"></span></div>
 <div class="bar"><i id="prog"></i></div>
 <div id="app"></div>
@@ -59,32 +57,32 @@ const path = u => esc(new URL(u).pathname);
 const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function render() {
   const done = items.filter(x => x.ok !== "").length;
-  document.getElementById("count").textContent = `Oceniono ${done} z ${items.length}`;
-  document.getElementById("stat").textContent = `Tak: ${items.filter(x=>x.ok==="1").length} · Nie: ${items.filter(x=>x.ok==="0").length}`;
+  document.getElementById("count").textContent = `Labelled ${done} of ${items.length}`;
+  document.getElementById("stat").textContent = `Yes: ${items.filter(x=>x.ok==="1").length} · No: ${items.filter(x=>x.ok==="0").length}`;
   document.getElementById("prog").style.width = (100 * done / items.length) + "%";
   const app = document.getElementById("app");
   if (i >= items.length) {
-    app.innerHTML = `<div class="card done"><p class="q">Gotowe - dzięki!</p>
-      <p>Odpowiedzi są zapisane. Wróć do Claude i napisz, że skończyłeś.</p>
-      <div class="nav" style="justify-content:center"><button onclick="i=0;render()">← wróć do początku</button></div></div>`;
+    app.innerHTML = `<div class="card done"><p class="q">Done - thanks!</p>
+      <p>Your answers are saved. Next: internal-linking evaluate.</p>
+      <div class="nav" style="justify-content:center"><button onclick="i=0;render()">← back to the start</button></div></div>`;
     return;
   }
   const it = items[i];
-  const prev = it.ok === "1" ? "Twoja odpowiedź: Tak" : it.ok === "0" ? "Twoja odpowiedź: Nie" : "";
+  const prev = it.ok === "1" ? "Your answer: Yes" : it.ok === "0" ? "Your answer: No" : "";
   app.innerHTML = `<div class="card">
-    <p class="q">Czy na stronie „${esc(it.source_title)}” dodać link do „${esc(it.target_title)}”?</p>
-    <div class="lbl">Strona, na której byłby link</div>
+    <p class="q">Add a link from “${esc(it.source_title)}” to “${esc(it.target_title)}”?</p>
+    <div class="lbl">Page that would get the link</div>
     <div><a href="${it.source_url}" target="_blank">${esc(it.source_title)}</a> <span class="path">${path(it.source_url)}</span></div>
-    <div class="lbl">Strona, do której prowadziłby link</div>
+    <div class="lbl">Page the link would point to</div>
     <div><a href="${it.target_url}" target="_blank">${esc(it.target_title)}</a> <span class="path">${path(it.target_url)}</span></div>
-    <div class="lbl">Fraza w tekście, na którą trafiłby link (${it.anchor_type === "exact" ? "exact match" : "partial match"})</div>
+    <div class="lbl">Phrase in the text that would carry the link (${it.anchor_type === "exact" ? "exact match" : "partial match"})</div>
     <div class="snip">${it.snippet || esc(it.anchor)}</div>
-    ${it.in_menu === "1" ? `<div class="note">Ta strona jest już w menu serwisu - pytanie dotyczy dodatkowego linku w treści.</div>` : ""}
-    <div class="btns"><button class="yes" onclick="answer('1')">Tak (T)</button>
+    ${it.in_menu === "1" ? `<div class="note">This page is already in the site menu - the question is about an extra link in the content.</div>` : ""}
+    <div class="btns"><button class="yes" onclick="answer('1')">Yes (Y)</button>
       <button class="no" onclick="answer('0')">Nie (N)</button>
-      <button class="skip" onclick="answer('')">Nie wiem / pomiń</button></div>
-    <div class="nav"><button onclick="go(-1)">← poprzednia</button><span style="color:var(--muted)">${prev}</span>
-      <button onclick="go(1)">następna →</button></div></div>`;
+      <button class="skip" onclick="answer('')">Not sure / skip</button></div>
+    <div class="nav"><button onclick="go(-1)">← previous</button><span style="color:var(--muted)">${prev}</span>
+      <button onclick="go(1)">next →</button></div></div>`;
 }
 function go(d) { i = Math.max(0, Math.min(items.length, i + d)); render(); }
 async function answer(v) {
@@ -93,7 +91,7 @@ async function answer(v) {
   i++; render();
 }
 document.addEventListener("keydown", e => {
-  if (e.key === "t" || e.key === "T") answer("1");
+  if (e.key === "y" || e.key === "Y") answer("1");
   else if (e.key === "n" || e.key === "N") answer("0");
   else if (e.key === " ") { e.preventDefault(); answer(""); }
 });
@@ -102,7 +100,7 @@ render();
 
 
 def snippet(text: str, anchor: str, width: int = 160) -> str:
-    """Fragment tekstu źródła z zaznaczoną frazą anchora (HTML)."""
+    """Source text excerpt with the anchor phrase highlighted (HTML)."""
     if not anchor:
         return ""
     m = re.search(re.escape(anchor), text)
@@ -114,19 +112,14 @@ def snippet(text: str, anchor: str, width: int = 160) -> str:
             + html.escape(after) + ("…" if end < len(text) else ""))
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--domain", required=True)
-    ap.add_argument("--port", type=int, default=8765)
-    args = ap.parse_args()
-
-    ddir = data_dir(args.domain)
+def serve(domain: str, port: int = 8765) -> None:
+    ddir = data_dir(domain)
     path = ddir / "sample_to_label.csv"
     rows = read_csv(path)
     fields = list(rows[0].keys()) if rows else FIELDS
     texts = {p["url"]: re.sub(r"\s*¶\s*", " ", p.get("text_free", p["text"])) for p in read_jsonl(ddir / "pages.jsonl")}
-    # fragment z run.py (kolumna kontekst), a dla starszych próbek - wyszukany w tekście strony
-    items = [{**r, "snippet": snippet(r.get("kontekst") or texts.get(r["source_url"], ""), r.get("anchor", ""))}
+    # the passage saved by `run` (context column); older samples fall back to the page text
+    items = [{**r, "snippet": snippet(r.get("context") or texts.get(r["source_url"], ""), r.get("anchor", ""))}
              for r in rows]
 
     class Handler(BaseHTTPRequestHandler):
@@ -147,9 +140,12 @@ def main() -> None:
         def log_message(self, *a):
             pass
 
-    print(f"Ocena {len(rows)} par: http://localhost:{args.port}  (Ctrl+C kończy)")
-    ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+    print(f"labelling {len(rows)} pairs: http://localhost:{port}  (Ctrl+C to stop)")
+    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
 
 
-if __name__ == "__main__":
-    main()
+def add_parser(sub) -> None:
+    p = sub.add_parser("label", help="label the sample in the browser (localhost)")
+    p.add_argument("--domain", required=True)
+    p.add_argument("--port", type=int, default=8765)
+    p.set_defaults(func=lambda args: serve(args.domain, args.port))

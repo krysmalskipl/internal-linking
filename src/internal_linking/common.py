@@ -1,10 +1,15 @@
-"""Wspólne pomocniki: katalogi danych, normalizacja URL-i, zapis/odczyt JSONL i CSV."""
+"""Shared helpers: data directories, URL normalisation, JSONL and CSV I/O."""
 import csv
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).parent
+_data_root = Path("data")
+
+
+def set_data_root(path: str | Path) -> None:
+    global _data_root
+    _data_root = Path(path)
 
 
 def bare_host(host: str) -> str:
@@ -13,13 +18,13 @@ def bare_host(host: str) -> str:
 
 
 def data_dir(domain: str) -> Path:
-    d = ROOT / "data" / bare_host(domain)
+    d = _data_root / bare_host(domain.removeprefix("https://").removeprefix("http://").strip("/"))
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def norm_url(url: str) -> str:
-    """Klucz do porównań: bez www, query i fragmentu, ze spójnym końcowym ukośnikiem."""
+    """Comparison key: no www, query or fragment, consistent trailing slash."""
     p = urlsplit(url)
     path = p.path or "/"
     if not path.endswith("/") and "." not in path.rsplit("/", 1)[-1]:
@@ -29,11 +34,6 @@ def norm_url(url: str) -> str:
 
 def is_internal(url: str, domain: str) -> bool:
     return bare_host(urlsplit(url).netloc) == bare_host(domain)
-
-
-def url_folder(url: str) -> str:
-    parts = [s for s in urlsplit(url).path.split("/") if s]
-    return parts[0] if len(parts) > 1 else ""
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -60,7 +60,7 @@ def read_csv(path: Path) -> list[dict]:
 
 
 def write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
-    # utf-8-sig, żeby Excel/Numbers poprawnie pokazały polskie znaki
+    # utf-8-sig so Excel and Numbers show non-ASCII characters correctly
     with path.open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
