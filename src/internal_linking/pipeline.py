@@ -388,5 +388,5 @@ def add_parser(sub) -> None:
     p.add_argument("--dry-run", action="store_true", help="count pairs and estimate cost without calling Jev")
     p.add_argument("--sitemap", help="sitemap URL (single domain only)")
     p.add_argument("--delay", type=float, default=0.5, help="seconds between page downloads")
-    p.add_argument("--workers", type=int, default=4, help="parallel Jev calls")
+    p.add_argument("--workers", type=int, default=12, help="parallel Jev calls (lower it on 429 errors)")
     p.set_defaults(func=run)
