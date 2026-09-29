@@ -1,18 +1,22 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Internal links report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
-:root { --bg:#f6f5f1; --panel:#ffffff; --ink:#1b1b1d; --muted:#6a6a70; --line:#e3e1db; --soft:#f0eee8;
-  --accent:#2e63d6; --accent-soft:#e6edfb; --mark:#ffe98a; --good:#1f8a4c; --warn:#b7791f; --bad:#c2412d;
-  --shadow:0 1px 2px rgba(0,0,0,.05); }
-@media (prefers-color-scheme: dark) { :root { --bg:#141416; --panel:#1d1d20; --ink:#ececee; --muted:#9a9aa1;
-  --line:#313136; --soft:#26262a; --accent:#7ea2ff; --accent-soft:#232c44; --mark:#5b4f1c; --good:#46b875;
-  --warn:#d9a441; --bad:#ec6d58; --shadow:none; } }
+:root { --bg:#ffffff; --panel:#ffffff; --ink:#0a0a0a; --muted:#5e5e66; --line:#e6e4ee; --soft:#f6f5fb;
+  --accent:#5b2ee0; --accent-btn:#5b2ee0; --accent-soft:#eeeafd; --mark:#d4f94c; --mark-ink:#0a0a0a;
+  --good:#5b2ee0; --warn:#c98a12; --bad:#d23c2a; --shadow:0 1px 2px rgba(10,10,10,.05);
+  --display:"Space Grotesk",system-ui,sans-serif; --body:"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0a0a0a; --panel:#141414; --ink:#f4f4f5; --muted:#a1a1aa;
+  --line:#2a2a30; --soft:#1c1c1f; --accent:#9b7fff; --accent-soft:#221a3d; --good:#9b7fff; --warn:#e0a93a;
+  --bad:#f0705c; --shadow:none; } }
 * { box-sizing:border-box } html,body { margin:0 }
-body { background:var(--bg); color:var(--ink); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif }
+body { background:var(--bg); color:var(--ink); font:15px/1.55 var(--body) }
+h1, h3, .stat b, .brand { font-family:var(--display); letter-spacing:-.01em }
 a { color:var(--accent); text-decoration:none } a:hover { text-decoration:underline }
 header { padding:22px 20px 8px; max-width:1320px; margin:0 auto }
-h1 { font-size:22px; margin:0 } .sub { color:var(--muted); margin:2px 0 0; font-size:14px }
+h1 { font-size:26px; margin:0; font-weight:700 } h1 .dot { color:var(--accent) } .sub { color:var(--muted); margin:2px 0 0; font-size:14px }
 .layout { display:grid; grid-template-columns:290px 1fr; gap:20px; max-width:1320px; margin:0 auto; padding:12px 20px 60px }
 aside { position:sticky; top:12px; align-self:start; background:var(--panel); border:1px solid var(--line);
   border-radius:14px; padding:16px; box-shadow:var(--shadow); max-height:calc(100vh - 24px); overflow:auto }
@@ -24,13 +28,15 @@ select, input[type=search] { width:100%; font:inherit; font-size:14px; padding:7
   border:1px solid var(--line); background:var(--soft); color:var(--ink) }
 .btn { font:inherit; font-size:13px; border:1px solid var(--line); background:var(--soft); color:var(--ink);
   border-radius:8px; padding:6px 10px; cursor:pointer } .btn:hover { border-color:var(--accent) }
-.btn.primary { background:var(--accent); color:#fff; border-color:var(--accent) }
+.btn.primary { background:var(--accent-btn); color:#fff; border-color:var(--accent-btn); font-weight:600 }
+.btn.primary:hover { filter:brightness(1.1) }
 .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-bottom:14px }
 .stat { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 14px; box-shadow:var(--shadow) }
+.stat:first-child { background:var(--accent-btn); border-color:var(--accent-btn); color:#fff } .stat:first-child span { color:#e4dcff }
 .stat b { display:block; font-size:22px; font-variant-numeric:tabular-nums } .stat span { color:var(--muted); font-size:13px }
 .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; align-items:center }
 .tab { font:inherit; font-size:14px; border:1px solid var(--line); background:var(--panel); color:var(--ink);
-  padding:7px 12px; border-radius:999px; cursor:pointer } .tab.on { background:var(--ink); color:var(--bg); border-color:var(--ink) }
+  padding:7px 12px; border-radius:999px; cursor:pointer } .tab.on { background:var(--accent-btn); color:#fff; border-color:var(--accent-btn) }
 .tabs .right { margin-left:auto; display:flex; gap:6px }
 .group { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px;
   margin-bottom:14px; box-shadow:var(--shadow) }
@@ -41,8 +47,8 @@ select, input[type=search] { width:100%; font:inherit; font-size:14px; padding:7
 .steps { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; align-items:start }
 .k { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); padding-top:3px; white-space:nowrap }
 .ctx { background:var(--soft); border-radius:10px; padding:10px 12px }
-mark { background:var(--mark); color:inherit; border-radius:3px; padding:0 2px; font-weight:600 }
-.anchor { font-weight:700 } .pill { display:inline-block; font-size:11px; border:1px solid var(--line); border-radius:999px;
+mark { background:var(--mark); color:var(--mark-ink); border-radius:4px; padding:1px 3px; font-weight:700 }
+.anchor { font-weight:700; background:var(--accent-soft); border-radius:6px; padding:1px 7px } .pill { display:inline-block; font-size:11px; border:1px solid var(--line); border-radius:999px;
   padding:1px 8px; color:var(--muted); margin-left:6px; vertical-align:1px }
 .actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px }
 .metrics { display:flex; gap:14px; flex-wrap:wrap; margin-top:10px }
@@ -60,7 +66,7 @@ table.kw { width:100%; border-collapse:collapse; font-size:14px } .kw th, .kw td
   padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none } .toast.show { opacity:1 }
 @media (max-width: 860px) { .layout { grid-template-columns:1fr } aside { position:static; max-height:none } }
 </style></head><body>
-<header><h1>Internal links to insert</h1><p class="sub" id="sub"></p></header>
+<header><h1>Internal links to insert<span class="dot">.</span></h1><p class="sub" id="sub"></p></header>
 <div class="layout">
 <aside>
   <h2>Filters</h2>
