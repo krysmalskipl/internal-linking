@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Internal links report</title>
+<script>try { const t = localStorage.getItem("il-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -8,14 +9,23 @@
   --accent:#5b2ee0; --accent-btn:#5b2ee0; --accent-soft:#eeeafd; --mark:#d4f94c; --mark-ink:#0a0a0a;
   --good:#5b2ee0; --warn:#c98a12; --bad:#d23c2a; --shadow:0 1px 2px rgba(10,10,10,.05);
   --display:"Space Grotesk",system-ui,sans-serif; --body:"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-@media (prefers-color-scheme: dark) { :root { --bg:#0a0a0a; --panel:#141414; --ink:#f4f4f5; --muted:#a1a1aa;
+:root { color-scheme:light }
+/* dark: follows the system unless the viewer picked a theme (data-theme on <html>) */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0a0a0a; --panel:#141414; --ink:#f4f4f5; --muted:#a1a1aa;
   --line:#2a2a30; --soft:#1c1c1f; --accent:#9b7fff; --accent-soft:#221a3d; --good:#9b7fff; --warn:#e0a93a;
-  --bad:#f0705c; --shadow:none; } }
+  --bad:#f0705c; --shadow:none; color-scheme:dark; } }
+:root[data-theme="dark"] { --bg:#0a0a0a; --panel:#141414; --ink:#f4f4f5; --muted:#a1a1aa;
+  --line:#2a2a30; --soft:#1c1c1f; --accent:#9b7fff; --accent-soft:#221a3d; --good:#9b7fff; --warn:#e0a93a;
+  --bad:#f0705c; --shadow:none; color-scheme:dark; }
 * { box-sizing:border-box } html,body { margin:0 }
 body { background:var(--bg); color:var(--ink); font:15px/1.55 var(--body) }
 h1, h3, .stat b, .brand { font-family:var(--display); letter-spacing:-.01em }
 a { color:var(--accent); text-decoration:none } a:hover { text-decoration:underline }
-header { padding:22px 20px 8px; max-width:1320px; margin:0 auto }
+header { padding:22px 20px 8px; max-width:1320px; margin:0 auto; display:flex; justify-content:space-between;
+  align-items:flex-start; gap:16px; flex-wrap:wrap }
+.theme { display:inline-flex; border:1px solid var(--line); border-radius:999px; padding:3px; background:var(--panel) }
+.theme button { font:inherit; font-size:13px; border:0; background:transparent; color:var(--muted); padding:5px 12px;
+  border-radius:999px; cursor:pointer } .theme button.on { background:var(--ink); color:var(--bg); font-weight:600 }
 h1 { font-size:26px; margin:0; font-weight:700 } h1 .dot { color:var(--accent) } .sub { color:var(--muted); margin:2px 0 0; font-size:14px }
 .layout { display:grid; grid-template-columns:290px 1fr; gap:20px; max-width:1320px; margin:0 auto; padding:12px 20px 60px }
 aside { position:sticky; top:12px; align-self:start; background:var(--panel); border:1px solid var(--line);
@@ -66,7 +76,8 @@ table.kw { width:100%; border-collapse:collapse; font-size:14px } .kw th, .kw td
   padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none } .toast.show { opacity:1 }
 @media (max-width: 860px) { .layout { grid-template-columns:1fr } aside { position:static; max-height:none } }
 </style></head><body>
-<header><h1>Internal links to insert<span class="dot">.</span></h1><p class="sub" id="sub"></p></header>
+<header><div><h1>Internal links to insert<span class="dot">.</span></h1><p class="sub" id="sub"></p></div>
+  <div class="theme" role="group" aria-label="Theme"><button data-theme-set="light">☀ Light</button><button data-theme-set="dark">☾ Dark</button></div></header>
 <div class="layout">
 <aside>
   <h2>Filters</h2>
@@ -248,5 +259,12 @@ $("csv").addEventListener("click", () => {
   const blob = new Blob(["﻿" + lines.join("\n")], { type:"text/csv" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `links-${D.domain}.csv`; a.click();
 });
+function theme(t) {
+  if (t) { document.documentElement.dataset.theme = t; try { localStorage.setItem("il-theme", t); } catch (e) {} }
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.querySelectorAll("[data-theme-set]").forEach(b => b.classList.toggle("on", b.dataset.themeSet === cur));
+}
+document.querySelector(".theme").addEventListener("click", e => { const b = e.target.closest("[data-theme-set]"); if (b) theme(b.dataset.themeSet); });
+theme();
 update();
 </script></body></html>
