@@ -4,6 +4,10 @@ Internal link suggestions for any website, in one command. The tool finds phrase
 
 > Works with Polish and English pages. The language is detected per page (`<html lang>`, or the text when the attribute is missing), so bilingual sites get links within each language version. Other languages are skipped.
 
+![Report: pages with new links, the paragraph with the highlighted phrase and the target page](examples/report.png)
+
+Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.pl.html) - a real run on a 43-page SEO blog: 28 links on 20 pages, 127 suggestions judged, $0.01. Download it and open it in a browser.
+
 ## Why?
 
 - **Links on text that is already there.** Most internal linking tools suggest "related pages" and leave it to you to find a spot, or write new sentences for you. This one only proposes a link where a matching phrase already exists, so you get the paragraph, the phrase and the target - nothing to rewrite.
