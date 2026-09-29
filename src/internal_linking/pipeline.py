@@ -84,11 +84,29 @@ def already_linked(src: dict, sitewide: dict[str, set[str]]) -> set[str]:
     return set(src["content_links"]) | set(src.get("breadcrumb_links", [])) | local
 
 
-def url_matches(url: str, pattern: str | None) -> bool:
-    return not pattern or re.search(pattern, urlsplit(url).path) is not None
+def url_matches(url: str, pattern: str | None, allowed: set[str] | None = None) -> bool:
+    """URL passes the regex on its path (if any) and is on the allowed list (if any)."""
+    return ((not pattern or re.search(pattern, urlsplit(url).path) is not None)
+            and (allowed is None or norm_url(url) in allowed))
 
 
-def prepare(pages: list[dict], cfg: dict, sources_re: str | None = None, targets_re: str | None = None) -> dict:
+def load_url_list(path: str | None, domain: str) -> set[str] | None:
+    """URLs from a file, one per line - full URLs or paths ("/blog/post/"); # starts a comment."""
+    if not path:
+        return None
+    base = f"https://{domain.removeprefix('https://').removeprefix('http://').strip('/')}"
+    urls = set()
+    for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            urls.add(norm_url(line if "://" in line else base + "/" + line.lstrip("/")))
+    if not urls:
+        raise RuntimeError(f"{path}: no URLs found")
+    return urls
+
+
+def prepare(pages: list[dict], cfg: dict, sources_re: str | None = None, targets_re: str | None = None,
+            sources_list: set[str] | None = None, targets_list: set[str] | None = None) -> dict:
     """Shared per-site data for both modes. Pages in unsupported languages are left out.
     sources_re / targets_re: optional regexes on the URL path limiting which pages get links and
     which pages links point to (e.g. only categories as targets in a large shop)."""
@@ -105,7 +123,7 @@ def prepare(pages: list[dict], cfg: dict, sources_re: str | None = None, targets
     vocab = [finder.profile(titles[j], p["h1"], p["url"], p["lang"])[0] for j, p in enumerate(pages)]
     index: dict[str, list[int]] = {}
     for j, words_j in enumerate(vocab):
-        if url_matches(pages[j]["url"], targets_re):
+        if url_matches(pages[j]["url"], targets_re, targets_list):
             for w in words_j:
                 index.setdefault(word_key(w), []).append(j)
     return {
@@ -114,7 +132,7 @@ def prepare(pages: list[dict], cfg: dict, sources_re: str | None = None, targets
         "sitewide": sitewide_links(pages),
         "finder": finder,
         "sources": [i for i, p in enumerate(pages)
-                    if len(p["text"].split()) >= cfg["min_words"] and url_matches(p["url"], sources_re)],
+                    if len(p["text"].split()) >= cfg["min_words"] and url_matches(p["url"], sources_re, sources_list)],
         "vocab": vocab,
         "index": index,
         "source_keys": [text_keys(" ".join(b["text"] for b in p.get("blocks", []) if b["tag"] not in NO_LINK_BLOCKS),
@@ -160,10 +178,11 @@ def make_rows(site: dict, anchors: dict, keyword_of: dict | None = None) -> list
     return rows
 
 
-def find_candidates(pages: list[dict], cfg: dict, sources_re: str | None = None,
-                    targets_re: str | None = None) -> tuple[list[dict], dict]:
+def find_candidates(pages: list[dict], cfg: dict, sources_re: str | None = None, targets_re: str | None = None,
+                    sources_list: set[str] | None = None,
+                    targets_list: set[str] | None = None) -> tuple[list[dict], dict]:
     """Automatic mode: targets and phrases come from the pages' own titles, H1s and slugs."""
-    site = prepare(pages, cfg, sources_re, targets_re)
+    site = prepare(pages, cfg, sources_re, targets_re, sources_list, targets_list)
     pages, titles, finder, sources = site["pages"], site["titles"], site["finder"], site["sources"]
 
     anchors = {}  # (source, target) -> (phrase, exact/partial, block index)
@@ -203,10 +222,10 @@ def find_candidates(pages: list[dict], cfg: dict, sources_re: str | None = None,
     return make_rows(site, anchors), info
 
 
-def keyword_candidates(pages: list[dict], cfg: dict, keywords: list[dict],
-                       sources_re: str | None = None) -> tuple[list[dict], dict, list[dict]]:
+def keyword_candidates(pages: list[dict], cfg: dict, keywords: list[dict], sources_re: str | None = None,
+                       sources_list: set[str] | None = None) -> tuple[list[dict], dict, list[dict]]:
     """Keyword mode: only the given phrases, each linked to its (given or auto-picked) target."""
-    site = prepare(pages, cfg, sources_re)
+    site = prepare(pages, cfg, sources_re, sources_list=sources_list)
     pages, titles, finder, sources = site["pages"], site["titles"], site["finder"], site["sources"]
     resolved, warnings = kw.resolve(keywords, pages, titles)
     for w in warnings:
@@ -315,10 +334,19 @@ def process(domain: str, args, cfg: dict) -> dict:
         raise RuntimeError("no up-to-date pages.jsonl - run without --no-crawl")
 
     resolved = None
+    sources_list = load_url_list(args.sources_file, domain)
+    targets_list = load_url_list(args.targets_file, domain)
+    crawled = {norm_url(p["url"]) for p in pages}
+    for name, lst in (("--sources-file", sources_list), ("--targets-file", targets_list)):
+        missing = sorted(lst - crawled) if lst else []
+        if missing:
+            print(f"  ! {name}: {len(missing)} URL(s) not in the crawl (not in the sitemap?): "
+                  + ", ".join(missing[:5]) + (" ..." if len(missing) > 5 else ""))
     if args.keywords:
-        rows, info, resolved = keyword_candidates(pages, cfg, kw.load_keywords(args.keywords), args.sources)
+        rows, info, resolved = keyword_candidates(pages, cfg, kw.load_keywords(args.keywords), args.sources,
+                                                  sources_list)
     else:
-        rows, info = find_candidates(pages, cfg, args.sources, args.targets)
+        rows, info = find_candidates(pages, cfg, args.sources, args.targets, sources_list, targets_list)
     print(f"pages: {len(pages)}, " + ", ".join(f"{k}: {v}" for k, v in info.items())
           + f", pairs with a phrase: {len(rows)}")
     if args.dry_run:
@@ -383,6 +411,8 @@ def add_parser(sub) -> None:
     p.add_argument("--sources", help="regex on the URL path: only these pages get links (e.g. '/blog/')")
     p.add_argument("--targets", help="regex on the URL path: links only to these pages "
                                      "(e.g. '/kategoria-produktu/|/blog/' in a large shop)")
+    p.add_argument("--sources-file", help="file with the URLs (or paths) that get links, one per line")
+    p.add_argument("--targets-file", help="file with the URLs (or paths) links may point to, one per line")
     p.add_argument("--no-crawl", action="store_true", help="reuse the saved pages.jsonl")
     p.add_argument("--dry-run", action="store_true", help="count pairs and estimate cost without calling Jev")
     p.add_argument("--sitemap", help="sitemap URL (single domain only)")

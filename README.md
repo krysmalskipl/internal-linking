@@ -45,7 +45,9 @@ internal-linking run --domain example.com --dry-run      # count pairs and estim
 internal-linking run --domain example.com --no-crawl     # reuse downloaded pages
 internal-linking run --domain example.com --max-links 5  # new links per page (default 3)
 internal-linking run --domain shop.com --targets '/category/|/blog/'   # large shop: link only to categories and posts
-internal-linking run --domain shop.com --sources '/blog/'               # only blog posts get new links
+internal-linking run --domain shop.com --sources '^/blog/'              # only blog posts get new links (to any page)
+internal-linking run --domain example.com --sources-file urls.txt        # only these pages get new links (URLs or paths, one per line)
+internal-linking run --domain example.com --sources '^/blog/' --keywords services.csv   # blog → service pages on your phrases
 internal-linking run --domain example.com --keywords keywords.csv   # keyword mode, see below
 internal-linking report --domain example.com             # rebuild report.html from saved results - no crawl, no Jev calls
 internal-linking questions --lang en                     # print the questions sent to Jev (en / pl)
@@ -58,7 +60,7 @@ Results land in `data/<domain>/` (change with `--data-dir`):
 - `links.csv` - links to insert
 - `recommendations.csv` - every judged suggestion with its decision and reason
 
-Jev answers are cached (`jev_pairs.jsonl`), so re-runs only pay for new or changed pairs. Rough numbers: a 50-page site takes about a minute and about $0.01; downloading is the slow part on large sites (about 0.5 s per page), the phrase search takes seconds thanks to a word index. On a shop with thousands of products, `--targets` / `--sources` (regexes on the URL path) keep the number of Jev calls - and the cost - under control; check it first with `--dry-run`.
+Jev answers are cached (`jev_pairs.jsonl`), so re-runs only pay for new or changed pairs. Rough numbers: a 50-page site takes about a minute and about $0.01; downloading is the slow part on large sites (about 0.5 s per page), the phrase search takes seconds thanks to a word index. `--sources` / `--targets` (regexes on the URL path) and `--sources-file` / `--targets-file` (lists of URLs or paths) choose which pages get links and which pages links may point to - the whole site is still crawled, so e.g. blog posts can link to service pages. On a shop with thousands of products they also keep the number of Jev calls - and the cost - under control; check it first with `--dry-run`.
 
 ## Keyword mode
 

@@ -82,3 +82,18 @@ def test_template_links_count_per_language_version():
     # the English sidebar link is on half of the English pages - a template link there,
     # even though it is on only 2 of 10 pages overall
     assert "example.pl/en/sidebar/" not in already_linked(en[0], sitewide)
+
+
+def test_sources_can_be_limited_by_regex_or_url_list(site, tmp_path):
+    from internal_linking.pipeline import load_url_list
+    home = "Robimy też serwis klimatyzacji samochodowej i wymianę opon zimowych. " + site[0]["text"]
+    site[0].update(text=home, blocks=[{"tag": "p", "text": home, "raw": home}])
+    only_home, _ = find_candidates(site, load_config(), sources_re="^/$")
+    assert {r["source_url"] for r in only_home} == {"https://example.pl/"}
+    assert {r["target_url"] for r in only_home} >= {"https://example.pl/klimatyzacja/"}   # targets stay open
+    f = tmp_path / "urls.txt"
+    f.write_text("# blog only\n/geometria/\nhttps://www.example.pl/\n")
+    allowed = load_url_list(str(f), "example.pl")
+    assert allowed == {"example.pl/geometria/", "example.pl/"}
+    rows, _ = find_candidates(site, load_config(), sources_list=allowed)
+    assert {r["source_url"] for r in rows} <= {"https://example.pl/", "https://example.pl/geometria/"}
