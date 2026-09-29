@@ -57,3 +57,24 @@ def test_headings_are_never_used(site):
     phrase, kind, index = finder.find_in_blocks(blocks, "Remonty mieszkań", "Wymiana opon zimowych", "",
                                                 "https://example.pl/wymiana-opon/")
     assert (phrase, kind, index) == ("wymianę opon zimowych", "exact", 1)
+
+
+def test_english_inflection_and_fillers():
+    pages = [{"url": f"https://example.com/{i}/", "title": t, "h1": t, "lang": "en",
+              "text": "We renovate flats and houses across the city. " * 30}
+             for i, t in enumerate(["Home", "Bathroom renovation", "Kitchen renovation", "Contact"])]
+    finder = AnchorFinder(pages)
+    found = finder.find("We finished two bathroom renovations this month.", "Home",
+                        "Bathroom renovation", "", "https://example.com/bathroom-renovation/", "en")
+    assert found == ("bathroom renovations", "exact")
+    # "the ultimate guide" is filler, never a keyword
+    assert content_words("The ultimate guide to bathroom renovation", "en") == ["bathroom", "renovation"]
+
+
+def test_language_is_detected_from_text_when_html_lang_is_missing():
+    from internal_linking.anchors import detect_lang
+    assert detect_lang({"lang": "", "text": "The best way to plan the renovation of your bathroom is to start "
+                                            "with the layout and the budget for tiles and fittings."}) == "en"
+    assert detect_lang({"lang": "", "text": "Remont łazienki warto zacząć od projektu i budżetu na płytki, "
+                                            "armaturę oraz robociznę, a potem wybrać wykonawcę."}) == "pl"
+    assert detect_lang({"lang": "de", "text": "Die Renovierung des Badezimmers beginnt mit der Planung."}) == ""

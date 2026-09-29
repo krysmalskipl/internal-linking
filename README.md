@@ -2,7 +2,7 @@
 
 Internal link suggestions for any website, in one command. The tool finds phrases that **already exist** in your content (exact or partial match of another page's name) and asks [Jev](https://openrouter.ai/) - a typed-decision model by TypeSafe, available through OpenRouter - to judge every page → phrase → target pair. The output is a CMS-agnostic HTML report and CSV with links ready to insert.
 
-> Built for Polish-language sites: phrase matching handles Polish inflection and the questions sent to Jev are in Polish. Everything else - code, CLI output, the report - is in English.
+> Works with Polish and English pages. The language is detected per page (`<html lang>`, or the text when the attribute is missing), so bilingual sites get links within each language version. Other languages are skipped.
 
 ## Why?
 
@@ -10,6 +10,8 @@ Internal link suggestions for any website, in one command. The tool finds phrase
 - **Judged, not guessed.** Jev answers closed questions with probabilities (is the passage on topic, is the phrase a natural anchor, would the link cannibalise the source page), so decisions come from thresholds you can measure and tune instead of from reading generated prose.
 - **Cheap enough for every site.** One Jev call per pair, cached between runs - a 50-page site costs about a cent.
 - **Safe defaults.** No links from headings, no duplicates of existing links, no phrases repeated like a template, same language only, at most 3 new links per page.
+
+The default thresholds were calibrated on Polish service and blog sites; on a new kind of site (e.g. an online store) or on English pages, check a sample first (see [Thresholds and quality checks](#thresholds-and-quality-checks-optional)).
 
 ## Install
 
@@ -28,7 +30,7 @@ internal-linking run --domains-file domains.txt          # one domain per line
 internal-linking run --domain example.com --dry-run      # count pairs and estimate cost, no Jev calls
 internal-linking run --domain example.com --no-crawl     # reuse downloaded pages
 internal-linking run --domain example.com --max-links 5  # new links per page (default 3)
-internal-linking questions                               # print the questions sent to Jev
+internal-linking questions --lang en                     # print the questions sent to Jev (en / pl)
 ```
 
 (With the virtualenv not activated, use `.venv/bin/internal-linking`.)
@@ -43,7 +45,7 @@ Jev answers are cached (`jev_pairs.jsonl`), so re-runs only pay for new or chang
 ## How it works
 
 1. **Crawl** (`crawl.py`) - respects robots.txt (`Disallow`, `Crawl-delay`), reads the sitemap (from `robots.txt` or common locations) and, for each page, the title, H1, meta description, language, typed content blocks (paragraph, list item, heading...) and existing links (in content, breadcrumbs, elsewhere). Skips redirects, `noindex` and pages canonicalised elsewhere.
-2. **Phrases** (`anchors.py`) - searches paragraphs and list items (never headings) for phrases matching another page's title, H1 or slug, inflection-aware:
+2. **Phrases** (`anchors.py`) - searches paragraphs and list items (never headings) for phrases matching another page's title, H1 or slug, inflection-aware, with per-language lists of function words and title fillers:
    - `exact` - the phrase covers the target's full name,
    - `partial` - at least two words of the target's name, including a distinctive one,
    - existing link text and code are never used; no single words or generic fillers.
@@ -68,7 +70,7 @@ src/internal_linking/
 ├── cli.py            # `internal-linking` command
 ├── pipeline.py       # candidates, rules, selection, one run per domain
 ├── crawl.py          # sitemap, robots.txt, content blocks, existing links
-├── anchors.py        # exact / partial phrase matching (Polish inflection)
+├── anchors.py        # exact / partial phrase matching, language detection
 ├── report.py         # report.html
 ├── config.py         # thresholds (config.json)
 ├── jev/client.py     # OpenRouter decisions API

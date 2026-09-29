@@ -5,7 +5,7 @@ list" question per page (probabilities then spread across all options), every pa
 call with a few closed questions. The block type (paragraph, list...) is computed from the HTML
 and passed as a fact. Hard rules on the answers (thresholds in config.json) produce a reason code.
 
-The questions are in Polish on purpose: the tool targets Polish-language sites.
+Questions exist in Polish and English; each pair is asked in the language of its pages.
 """
 import hashlib
 import json
@@ -72,9 +72,65 @@ QUESTIONS = {
 
 PLACES = {"p": "akapit", "li": "punkt listy", "td": "komórka tabeli", "dd": "definicja",
           "dt": "termin", "blockquote": "cytat", "figcaption": "podpis grafiki", "inne": "inny fragment"}
+
+QUESTIONS_EN = {
+    "context": {
+        "type": "noul",
+        "instructions": "Does the passage containing the link phrase discuss the subject that the target page covers?",
+        "criteria": {
+            "true": "Yes - after clicking, the reader gets more on exactly what they are reading about.",
+            "false": "No - the passage is about something else and the phrase only superficially matches the "
+                     "target's title (e.g. 'tyre change price' in a sentence about opening hours, when the "
+                     "target is a technical guide to tyres). When in doubt, answer no.",
+        },
+    },
+    "anchor": {
+        "type": "noul",
+        "instructions": "Is the phrase natural link text: understandable on its own and clearly announcing "
+                        "what the target page is about?",
+        "criteria": {
+            "true": "Yes - e.g. 'robots.txt file', 'SEO audit for online stores', 'winter tyre change'.",
+            "false": "No - truncated, too generic or with stray words "
+                     "(e.g. 'robots.txt does not block', 'practical implementation', 'check Google').",
+        },
+    },
+    "value": {
+        "type": "score",
+        "instructions": "How valuable to the reader would a link on this phrase to the target page be, "
+                        "at this exact spot in the text?",
+        "criteria": [
+            "Worthless - the link confuses the reader or leads away from the sentence",
+            "Weak - loose connection, the reader will hardly click",
+            "Fair - related subject, moderately useful",
+            "Good - expands on the point made in this sentence",
+            "Ideal - at this spot the reader is looking for exactly this page",
+        ],
+    },
+    "cannibalisation": {
+        "type": "noul",
+        "instructions": "Does the link phrase mainly describe the main topic of the source page "
+                        "(rather than the target page)?",
+        "criteria": {
+            "true": "The phrase is the source page's own topic - a link would take its traffic for that phrase.",
+            "false": "The phrase is a side topic of the source page that the target page expands on.",
+        },
+    },
+    "verdict": {
+        "type": "choice",
+        "instructions": "What is the overall verdict on this link suggestion?",
+        "criteria": {
+            "ok": "Good link - the passage and the target share the topic and the phrase fits",
+            "off_topic": "The phrase matches the words, but the passage is about a different topic than the target",
+            "too_generic": "The phrase is too generic to point unambiguously to this target",
+            "cannibalisation": "The phrase describes the source page's own topic",
+            "wrong_intent": "At this spot the reader expects a different kind of page (e.g. a service, not an article)",
+            "navigation_or_template": "The phrase sits in a list, navigation or a repeated block",
+        },
+    },
+}
+PLACES_EN = {"p": "paragraph", "li": "list item", "td": "table cell", "dd": "definition", "dt": "term",
+             "blockquote": "quote", "figcaption": "image caption", "inne": "other passage"}
 CONTEXT_CHARS = 600
-
-
 def context(block: dict, phrase: str) -> str:
     """The block (paragraph, list item) holding the phrase, trimmed to ~600 characters around it."""
     raw = block.get("raw") or block["text"]
@@ -86,7 +142,17 @@ def context(block: dict, phrase: str) -> str:
     return ("…" if start else "") + raw[start:end] + ("…" if end < len(raw) else "")
 
 
-def build_state(src: dict, src_title: str, block: dict, target: dict, target_title: str, phrase: str) -> dict:
+def build_state(src: dict, src_title: str, block: dict, target: dict, target_title: str, phrase: str,
+                lang: str = "pl") -> dict:
+    if lang == "en":
+        return {
+            "source_page": {"title": src_title, "h1": src["h1"], "url": src["url"]},
+            "placement": PLACES_EN.get(block["tag"], "other passage"),
+            "passage_with_phrase": context(block, phrase),
+            "link_phrase": phrase,
+            "target_page": {"title": target_title, "h1": target["h1"], "description": target["meta"][:200],
+                            "url": target["url"], "content_start": target["text"][:400]},
+        }
     return {
         "strona_zrodlowa": {"tytul": src_title, "h1": src["h1"], "url": src["url"]},
         "miejsce": PLACES.get(block["tag"], "inny fragment"),
@@ -97,13 +163,17 @@ def build_state(src: dict, src_title: str, block: dict, target: dict, target_tit
     }
 
 
-def cache_key(state: dict) -> str:
-    body = json.dumps({"state": state, "questions": QUESTIONS}, ensure_ascii=False, sort_keys=True)
+def questions(lang: str = "pl") -> dict:
+    return QUESTIONS_EN if lang == "en" else QUESTIONS
+
+
+def cache_key(state: dict, lang: str = "pl") -> str:
+    body = json.dumps({"state": state, "questions": questions(lang)}, ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(body.encode()).hexdigest()
 
 
-def judge(state: dict) -> dict:
-    return decide(state, QUESTIONS)
+def judge(state: dict, lang: str = "pl") -> dict:
+    return decide(state, questions(lang))
 
 
 # Jev verdict keys (Polish, part of the questions) → English reason codes in the output
@@ -115,16 +185,23 @@ PLACEMENT = {"p": "paragraph", "li": "list item", "td": "table cell", "dd": "def
              "blockquote": "quote", "figcaption": "caption", "inne": "other"}
 
 
-def summarize(resp: dict) -> dict:
+# answer keys per language: (context, anchor, value, cannibalisation, verdict)
+ANSWER_KEYS = {"pl": ("kontekst", "anchor", "wartosc", "kanibalizacja", "powod"),
+               "en": ("context", "anchor", "value", "cannibalisation", "verdict")}
+
+
+def summarize(resp: dict, lang: str = "pl") -> dict:
     """Jev answer → CSV columns. `score` = P(verdict "ok"), the strongest signal on hand labels."""
     a = resp["answers"]
+    k_context, k_anchor, k_value, k_cannib, k_verdict = ANSWER_KEYS["en" if lang == "en" else "pl"]
+    verdict = a[k_verdict]["choice"]
     return {
-        "score": round(a["powod"]["probabilities"].get("ok", 0), 3),
-        "jev_context": round(a["kontekst"]["noul"], 3),
-        "jev_anchor": round(a["anchor"]["noul"], 3),
-        "jev_value": round(a["wartosc"]["score"] / 4, 3),  # 0..1
-        "jev_cannibalisation": round(a["kanibalizacja"]["noul"], 3),
-        "jev_verdict": VERDICTS.get(a["powod"]["choice"], a["powod"]["choice"]),
+        "score": round(a[k_verdict]["probabilities"].get("ok", 0), 3),
+        "jev_context": round(a[k_context]["noul"], 3),
+        "jev_anchor": round(a[k_anchor]["noul"], 3),
+        "jev_value": round(a[k_value]["score"] / 4, 3),  # 0..1
+        "jev_cannibalisation": round(a[k_cannib]["noul"], 3),
+        "jev_verdict": VERDICTS.get(verdict, verdict),
     }
 
 
@@ -143,4 +220,5 @@ def reject_reason(row: dict, cfg: dict) -> str:
 
 def add_parser(sub) -> None:
     p = sub.add_parser("questions", help="print the questions sent to Jev for every pair")
-    p.set_defaults(func=lambda args: print(json.dumps(QUESTIONS, ensure_ascii=False, indent=2)))
+    p.add_argument("--lang", choices=["pl", "en"], default="en")
+    p.set_defaults(func=lambda args: print(json.dumps(questions(args.lang), ensure_ascii=False, indent=2)))

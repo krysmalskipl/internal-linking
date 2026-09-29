@@ -9,7 +9,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .anchors import AnchorFinder
+from .anchors import AnchorFinder, detect_lang
 from .common import append_jsonl, data_dir, norm_url, read_jsonl, write_csv
 from .config import load_config
 from .crawl import crawl
@@ -18,7 +18,7 @@ from .jev.client import JevError
 from .report import write_report
 
 COST_PER_PAIR = 0.00007    # estimate for --dry-run (about 600 input tokens per pair)
-FIELDS = ["decision", "decision_reason", "source_url", "source_title", "placement", "anchor", "anchor_type",
+FIELDS = ["decision", "decision_reason", "lang", "source_url", "source_title", "placement", "anchor", "anchor_type",
           "target_url", "target_title", "in_menu", "score", "jev_context", "jev_anchor", "jev_value",
           "jev_cannibalisation", "jev_verdict", "context"]
 
@@ -54,7 +54,12 @@ def already_linked(src: dict, sitewide: set[str]) -> set[str]:
 
 
 def find_candidates(pages: list[dict], cfg: dict) -> tuple[list[dict], dict]:
-    """(source, phrase, target) pairs with the phrase present in the text, after deterministic rules."""
+    """(source, phrase, target) pairs with the phrase present in the text, after deterministic rules.
+    Pages in unsupported languages are left out."""
+    for p in pages:
+        p["lang"] = detect_lang(p)
+    skipped_lang = sum(not p["lang"] for p in pages)
+    pages = [p for p in pages if p["lang"]]
     suffixes = site_suffixes(pages)
     sitewide = sitewide_links(pages)
     finder = AnchorFinder(pages)
@@ -66,8 +71,9 @@ def find_candidates(pages: list[dict], cfg: dict) -> tuple[list[dict], dict]:
         linked = already_linked(pages[i], sitewide)
         for j, t in enumerate(pages):
             # links only within one language (/en/ versions etc. are separate)
-            if j != i and norm_url(t["url"]) not in linked and t.get("lang", "") == pages[i].get("lang", ""):
-                found = finder.find_in_blocks(pages[i].get("blocks", []), titles[i], titles[j], t["h1"], t["url"])
+            if j != i and norm_url(t["url"]) not in linked and t["lang"] == pages[i]["lang"]:
+                found = finder.find_in_blocks(pages[i].get("blocks", []), titles[i], titles[j], t["h1"], t["url"],
+                                              pages[i]["lang"])
                 if found:
                     anchors[(i, j)] = found
 
@@ -82,7 +88,8 @@ def find_candidates(pages: list[dict], cfg: dict) -> tuple[list[dict], dict]:
     reserved = 0
     for (i, j), (phrase, kind, _) in list(anchors.items()):
         if kind == "partial" and any(
-                k != j and (m := finder.find(phrase, "", titles[k], t["h1"], t["url"])) and m[1] == "exact"
+                k != j and t["lang"] == pages[i]["lang"]
+                and (m := finder.find(phrase, "", titles[k], t["h1"], t["url"], t["lang"])) and m[1] == "exact"
                 for k, t in enumerate(pages)):
             del anchors[(i, j)]
             reserved += 1
@@ -90,15 +97,20 @@ def find_candidates(pages: list[dict], cfg: dict) -> tuple[list[dict], dict]:
     rows = []
     for (i, j), (phrase, kind, b) in anchors.items():
         block = pages[i]["blocks"][b]
-        state = pairs.build_state(pages[i], titles[i], block, pages[j], titles[j], phrase)
+        lang = pages[i]["lang"]
+        state = pairs.build_state(pages[i], titles[i], block, pages[j], titles[j], phrase, lang)
         rows.append({
+            "lang": lang,
             "source_url": pages[i]["url"], "source_title": titles[i],
             "target_url": pages[j]["url"], "target_title": titles[j],
             "anchor": phrase, "anchor_type": kind, "placement": pairs.PLACEMENT.get(block["tag"], "other"),
-            "context": state["fragment_z_fraza"], "in_menu": int(norm_url(pages[j]["url"]) in sitewide),
+            "context": pairs.context(block, phrase), "in_menu": int(norm_url(pages[j]["url"]) in sitewide),
             "_state": state,
         })
-    info = {"sources": len(sources), "template phrases": len(template), "reserved phrases": reserved}
+    info = {"languages": dict(Counter(p["lang"] for p in pages)), "sources": len(sources),
+            "template phrases": len(template), "reserved phrases": reserved}
+    if skipped_lang:
+        info["pages in unsupported languages"] = skipped_lang
     return rows, info
 
 
@@ -106,11 +118,11 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
     """Judges every pair with its own Jev call, cached in jev_pairs.jsonl."""
     cache_path = ddir / "jev_pairs.jsonl"
     cache = {r["key"]: r["response"] for r in read_jsonl(cache_path)}
-    keys = [pairs.cache_key(r["_state"]) for r in rows]
-    todo = {k: r["_state"] for k, r in zip(keys, rows) if k not in cache}
+    keys = [pairs.cache_key(r["_state"], r["lang"]) for r in rows]
+    todo = {k: (r["_state"], r["lang"]) for k, r in zip(keys, rows) if k not in cache}
     cost, failed = 0.0, 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {k: ex.submit(pairs.judge, st) for k, st in todo.items()}
+        futures = {k: ex.submit(pairs.judge, st, lang) for k, (st, lang) in todo.items()}
         for n, (k, fut) in enumerate(futures.items(), 1):
             try:
                 resp = fut.result()
@@ -127,7 +139,7 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
         raise RuntimeError(f"Jev failed on {failed} of {len(todo)} pairs - stopping this domain")
     for r, k in zip(rows, keys):
         if k in cache:
-            r.update(pairs.summarize(cache[k]))
+            r.update(pairs.summarize(cache[k], r["lang"]))
     print(f"Jev: {len(todo) - failed} new pairs, {len(rows) - len(todo)} cached, cost ${cost:.4f}")
     return cost
 
@@ -166,7 +178,7 @@ def process(domain: str, args, cfg: dict) -> dict:
           + f", pairs with a phrase: {len(rows)}")
     if args.dry_run:
         cache = {r["key"] for r in read_jsonl(ddir / "jev_pairs.jsonl")}
-        new = sum(pairs.cache_key(r["_state"]) not in cache for r in rows)
+        new = sum(pairs.cache_key(r["_state"], r["lang"]) not in cache for r in rows)
         print(f"to judge with Jev: {new} (the rest is cached), estimated cost ${new * COST_PER_PAIR:.3f}")
         return {"domain": domain, "pairs": len(rows), "to judge": new}
 

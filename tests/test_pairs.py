@@ -37,3 +37,19 @@ def test_cache_key_is_stable_and_depends_on_state():
     s2 = pairs.build_state(src, "A", block, tgt, "B", "tekst")
     assert pairs.cache_key(s1) == pairs.cache_key(s2)
     assert pairs.cache_key(s1) != pairs.cache_key({**s1, "fraza_linku": "inna"})
+
+
+def test_english_pairs_use_english_questions_and_keys():
+    src, tgt = page("https://example.com/a/", "A", "text", lang="en"), page("https://example.com/b/", "B", "text", lang="en")
+    block = {"tag": "li", "text": "text", "raw": "text"}
+    state = pairs.build_state(src, "A", block, tgt, "B", "text", "en")
+    assert state["placement"] == "list item" and state["link_phrase"] == "text"
+    assert pairs.cache_key(state, "en") != pairs.cache_key(state, "pl")
+    resp = {"answers": {
+        "context": {"noul": 0.7}, "anchor": {"noul": 0.6}, "value": {"score": 2.0},
+        "cannibalisation": {"noul": 0.2},
+        "verdict": {"choice": "wrong_intent", "probabilities": {"ok": 0.2}},
+    }}
+    assert pairs.summarize(resp, "en") == {"score": 0.2, "jev_context": 0.7, "jev_anchor": 0.6, "jev_value": 0.5,
+                                           "jev_cannibalisation": 0.2, "jev_verdict": "wrong_intent"}
+    assert set(pairs.QUESTIONS_EN["verdict"]["criteria"]) == set(pairs.VERDICTS.values())
