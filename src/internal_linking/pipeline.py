@@ -8,6 +8,7 @@ Two modes: automatic (targets and phrases come from the pages' titles) and keywo
 (--keywords: only the phrases you list, see keywords.py).
 """
 import re
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -18,13 +19,26 @@ from .common import append_jsonl, data_dir, norm_url, read_jsonl, write_csv
 from .config import load_config
 from .crawl import BOILERPLATE_SHARE, crawl, strip_boilerplate
 from .jev import pairs
-from .jev.client import JevError
+from .jev.client import JevError, api_key
 from .report import write_report
 
 COST_PER_PAIR = 0.00007    # estimate for --dry-run (about 600 input tokens per pair)
 FIELDS = ["decision", "decision_reason", "lang", "source_url", "source_title", "placement", "anchor", "anchor_type",
           "target_url", "target_title", "in_menu", "score", "jev_context", "jev_anchor", "jev_value",
           "jev_cannibalisation", "jev_verdict", "context"]
+
+
+class Progress:
+    """Prints "label: done/total unit" about every 10% and at the end, so long steps never look stuck."""
+
+    def __init__(self, label: str, total: int, unit: str):
+        self.label, self.total, self.unit, self.done = label, total, unit, 0
+        self.every = max(1, total // 10)
+
+    def step(self) -> None:
+        self.done += 1
+        if self.done % self.every == 0 or self.done == self.total:
+            print(f"  {self.label}: {self.done}/{self.total} {self.unit}")
 
 
 def site_suffixes(pages: list[dict]) -> set[str]:
@@ -120,7 +134,9 @@ def find_candidates(pages: list[dict], cfg: dict) -> tuple[list[dict], dict]:
     pages, titles, finder, sources = site["pages"], site["titles"], site["finder"], site["sources"]
 
     anchors = {}  # (source, target) -> (phrase, exact/partial, block index)
+    progress = Progress("searching phrases", len(sources), "pages")
     for i in sources:
+        progress.step()
         linked = already_linked(pages[i], site["sitewide"])
         for j, t in enumerate(pages):
             # links only within one language (/en/ versions etc. are separate)
@@ -157,7 +173,9 @@ def keyword_candidates(pages: list[dict], cfg: dict, keywords: list[dict]) -> tu
         print(f"  ! {w}")
 
     anchors, keyword_of = {}, {}
+    progress = Progress("searching keywords", len(resolved), "keywords")
     for k in resolved:
+        progress.step()
         j, target = k["target"], pages[k["target"]]
         n_words = len(content_words(k["keyword"], target["lang"]))
         for i in sources:
@@ -197,6 +215,10 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
     keys = [pairs.cache_key(r["_state"], r["lang"]) for r in rows]
     todo = {k: (r["_state"], r["lang"]) for k, r in zip(keys, rows) if k not in cache}
     cost, failed = 0.0, 0
+    if todo:
+        api_key()  # fail fast with a clear message when the key is missing
+        print(f"judging {len(todo)} pairs with Jev ({len(rows) - len(todo)} cached)...")
+    progress = Progress("judged", len(todo), "pairs")
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {k: ex.submit(pairs.judge, st, lang) for k, (st, lang) in todo.items()}
         for n, (k, fut) in enumerate(futures.items(), 1):
@@ -209,8 +231,7 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
             append_jsonl(cache_path, {"key": k, "response": resp})
             cache[k] = resp
             cost += resp.get("usage", {}).get("cost", 0) or 0
-            if n % 50 == 0:
-                print(f"  judged pairs: {n}/{len(todo)}")
+            progress.step()
     if todo and failed > 0.2 * len(todo):
         raise RuntimeError(f"Jev failed on {failed} of {len(todo)} pairs - stopping this domain")
     for r, k in zip(rows, keys):
@@ -243,6 +264,7 @@ def select(rows: list[dict], cfg: dict, max_links: int) -> None:
 def process(domain: str, args, cfg: dict) -> dict:
     print(f"\n=== {domain}")
     ddir = data_dir(domain)
+    started = time.monotonic()
     if not args.no_crawl:
         crawl(domain, args.sitemap, args.delay)
     pages = read_jsonl(ddir / "pages.jsonl")
@@ -281,6 +303,7 @@ def process(domain: str, args, cfg: dict) -> dict:
         "suggestions judged": len(rows), "Jev cost": f"${cost:.3f}"}, keyword_summary=summary)
     print(f"links to insert: {len(accepted)} on {pages_with} pages "
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")
+    print(f"done in {time.monotonic() - started:.0f} s")
     print(f"→ {ddir / 'report.html'}\n→ {ddir / 'links.csv'}")
     return {"domain": domain, "links": len(accepted), "pages": pages_with, "cost": round(cost, 4)}
 

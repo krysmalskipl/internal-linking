@@ -25,6 +25,16 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 cp .env.example .env   # put your OpenRouter API key in .env
 ```
 
+On Windows (PowerShell):
+
+```powershell
+git clone https://github.com/krysmalskipl/internal-linking; cd internal-linking
+py -m venv .venv; .venv\Scripts\Activate.ps1; pip install -e .
+copy .env.example .env   # put your OpenRouter API key in .env
+```
+
+Open a report with `open data/example.com/report.html` (macOS) or `start data\example.com\report.html` (Windows).
+
 ## Usage
 
 ```bash

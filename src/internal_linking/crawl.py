@@ -230,6 +230,7 @@ def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[d
     urls = list(dict.fromkeys(sitemap_urls(sitemap)))
     print(f"URLs in sitemap: {len(urls)}")
 
+    print(f"downloading {len(urls)} pages (about {len(urls) * (delay + 0.3) / 60:.0f} min)...")
     pages, skipped = [], {}
     for i, url in enumerate(urls, 1):
         if not robots.can_fetch(ROBOTS_AGENT, url):
