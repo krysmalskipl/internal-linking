@@ -11,6 +11,7 @@ import requests
 
 API_URL_DEFAULT = "https://openrouter.ai/api/alpha/decisions"
 MODEL_DEFAULT = "typesafe/jev-1.13"
+RETRY_STATUSES = {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}  # 52x: Cloudflare edge errors
 HINTS = {401: "missing or invalid key", 402: "no credits left on the OpenRouter account",
          429: "rate limited"}
 
@@ -54,7 +55,7 @@ def decide(state: dict, questions: dict, retries: int = 4, timeout: int = 60) ->
         else:
             if r.ok:
                 return r.json()
-            if r.status_code not in (429, 500, 502, 503, 504) or attempt == retries:
+            if r.status_code not in RETRY_STATUSES or attempt == retries:
                 raise JevError(f"API error {r.status_code} {HINTS.get(r.status_code, '')}\n{r.text[:500]}")
         time.sleep(2 ** attempt)
     raise JevError("unreachable")
