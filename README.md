@@ -1,6 +1,6 @@
 # internal-linking
 
-Internal link suggestions for any website, in one command. The tool finds phrases that **already exist** in your content (exact or partial match of another page's name) and asks [Jev](https://openrouter.ai/) - a typed-decision model by TypeSafe, available through OpenRouter - to judge every page → phrase → target pair. Every page is also turned into an embedding (Qwen, 768 dimensions, also through OpenRouter), so each link gets a similarity score and the report can draw the whole site as an interactive graph. The output is a CMS-agnostic HTML report and CSV with links ready to insert.
+Internal link suggestions for any website, in one command. The tool finds phrases that **already exist** in your content (exact or partial match of another page's name) and asks [Jev](https://openrouter.ai/) - a typed-decision model by TypeSafe, available through OpenRouter - to judge every page → phrase → target pair. Every page is also turned into an embedding (Qwen3 Embedding 8B, 768 dimensions, also through OpenRouter), so each link gets a similarity score and the report can draw the whole site as an interactive graph. The output is a CMS-agnostic HTML report and CSV with links ready to insert.
 
 > Works with Polish and English pages. The language is detected per page (`<html lang>`, or the text when the attribute is missing), so bilingual sites get links within each language version. Other languages are skipped.
 
@@ -90,16 +90,16 @@ Jev judges one passage and one link at a time. Embeddings add the view from abov
 
 **What is embedded.** One vector per crawled page, from its title, H1, meta description and the start of its content - template blocks (menus, footers, repeated sidebars) are already removed by the crawler - cut to the first 8,000 characters (about 2,000 tokens), which is plenty to say what a page is about. Pages in every language are embedded; comparisons stay within one language version.
 
-**Model.** `qwen/qwen3.7-text-embedding` through OpenRouter's embeddings endpoint (`/api/v1/embeddings`), with `dimensions: 768`, using the same `OPENROUTER_API_KEY` as Jev. Change it in `.env` or the environment:
+**Model.** [`qwen/qwen3-embedding-8b`](https://openrouter.ai/qwen/qwen3-embedding-8b) (Qwen3 Embedding 8B: multilingual including Polish, 33K-token context, $0.01 per million tokens on OpenRouter at the time of writing) through OpenRouter's embeddings endpoint (`/api/v1/embeddings`). Its vectors have 4,096 dimensions; the tool asks for `dimensions: 768` - plenty to compare pages, and five times smaller to store and compare. It uses the same `OPENROUTER_API_KEY` as Jev. Change the model or the size in `.env` or the environment:
 
 ```bash
-EMBEDDING_MODEL=qwen/qwen3.7-text-embedding   # any embedding model on OpenRouter
+EMBEDDING_MODEL=qwen/qwen3-embedding-8b   # any embedding model on OpenRouter, e.g. qwen/qwen3-embedding-4b
 EMBEDDING_DIMENSIONS=768
 ```
 
 If a provider ignores `dimensions` and returns a longer vector, it is cut to the first 768 values and normalised again - Qwen embeddings are trained Matryoshka-style, so the start of a vector is itself a valid smaller embedding. Vectors are stored normalised (length 1), so the dot product of two pages is their cosine similarity.
 
-**How it is sent and cached.** 20 texts per request, 4 requests in parallel. Every vector is saved to `data/<domain>/embeddings.jsonl` under a key made of the model, the dimensions and the embedded text, so a re-run sends only new or changed pages, and switching models re-embeds everything once. The cost of the first run is about (characters of the site's pages ÷ 4) tokens at the model's OpenRouter price; after that, only changed pages cost anything. `--dry-run` shows how many pages would be embedded.
+**How it is sent and cached.** 20 texts per request, 4 requests in parallel. Every vector is saved to `data/<domain>/embeddings.jsonl` under a key made of the model, the dimensions and the embedded text, so a re-run sends only new or changed pages, and switching models re-embeds everything once. The cost of the first run is about (characters of the site's pages ÷ 4) tokens at the model's OpenRouter price - at most about 2,000 tokens per page, so a 1,000-page site is about 2 million tokens, $0.02 with Qwen3 Embedding 8B; after that, only changed pages cost anything. `--dry-run` shows how many pages would be embedded.
 
 **What the vectors are used for:**
 
@@ -152,7 +152,7 @@ src/internal_linking/
 ├── keywords.py       # keyword list loading, target auto-pick
 ├── crawl.py          # sitemap, robots.txt, content blocks, existing links
 ├── anchors.py        # exact / partial phrase matching, language detection
-├── embeddings.py     # page embeddings (Qwen via OpenRouter), similarity, topic map, `embed` command
+├── embeddings.py     # page embeddings (Qwen3 Embedding 8B via OpenRouter), similarity, topic map, `embed` command
 ├── report.py         # interactive report.html with the Graph view, `report` command
 ├── vendor/           # force-graph (MIT), inlined into the report
 ├── config.py         # thresholds (config.json)
@@ -165,7 +165,7 @@ tests/                # pytest, no network: pip install -e ".[dev]" && pytest
 ## Notes
 
 - The API client is `jev/client.py` (model `typesafe/jev-1.13`; `JEV_MODEL` / `JEV_API_URL` override the defaults). Jev is served from OpenRouter's alpha decisions endpoint, which may change.
-- Embeddings use `qwen/qwen3.7-text-embedding` by default (`EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `EMBEDDING_API_URL` override it). If OpenRouter lists the model under another name, the run prints the API error and carries on without embeddings - put the right name in `.env` and run `internal-linking embed`.
+- Embeddings use `qwen/qwen3-embedding-8b` by default (`EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `EMBEDDING_API_URL` override it). If the embeddings API fails (e.g. a model that is no longer listed), the run prints the API error and carries on without embeddings - fix `.env` and run `internal-linking embed`.
 - The crawler identifies itself as `internal-linking`, respects robots.txt and waits 0.5 s between requests by default (`--delay`). Only run it on sites you own or have permission to analyse.
 
 ## Changelog
@@ -175,7 +175,7 @@ The package is public, so every release that changes the output or the command l
 ### 0.2.0 - 2026-10-10
 
 Added
-- Page embeddings (`embeddings.py`): one vector per page with `qwen/qwen3.7-text-embedding` through OpenRouter, 768 dimensions, cached in `embeddings.jsonl`; `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS` and `EMBEDDING_API_URL` to change them.
+- Page embeddings (`embeddings.py`): one vector per page with `qwen/qwen3-embedding-8b` through OpenRouter, 768 dimensions, cached in `embeddings.jsonl`; `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS` and `EMBEDDING_API_URL` to change them.
 - `similarity` (source page ↔ target page) on every suggestion: a column in `recommendations.csv` and `links.csv`, a bar on every link and a *Page similarity* slider in the report, and an optional `similarity_min` threshold in `config.json` (default 0, off) with the reject reason `low_similarity`.
 - *Graph* view in the report: the whole site with links today and the new links, a topic map from the embeddings or a link-based layout, click-to-focus with similarity rings and a side panel, closest unlinked pages, similarity histograms and summary tiles. force-graph 1.47.4 (MIT) is inlined, so the report still works offline.
 - `internal-linking embed --domain ...`: embeds the saved pages and rebuilds the report, without crawling or calling Jev.

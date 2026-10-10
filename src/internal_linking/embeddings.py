@@ -1,7 +1,7 @@
 """Page embeddings: how close in meaning two pages are, for every link and for the link graph.
 
 Every crawled page is turned into one vector - its title, H1, meta description and the start of
-its content - by an embedding model on OpenRouter (qwen/qwen3.7-text-embedding, 768 dimensions;
+its content - by an embedding model on OpenRouter (qwen/qwen3-embedding-8b, 768 dimensions;
 EMBEDDING_MODEL / EMBEDDING_DIMENSIONS override). Vectors are L2-normalised, so the dot product of
 two pages is their cosine similarity: about 1 for pages on the same subject, lower the further
 apart they are. They are cached in data/<domain>/embeddings.jsonl, keyed by model, dimensions and
@@ -25,7 +25,7 @@ from .common import Progress, append_jsonl, data_dir, read_jsonl
 from .jev.client import JevError, api_key, load_dotenv, post
 
 API_URL_DEFAULT = "https://openrouter.ai/api/v1/embeddings"
-MODEL_DEFAULT = "qwen/qwen3.7-text-embedding"
+MODEL_DEFAULT = "qwen/qwen3-embedding-8b"  # 4096 dimensions natively, Matryoshka-trained
 DIMENSIONS_DEFAULT = 768
 BATCH = 20         # texts per request - the per-request limit of Qwen embedding providers
 MAX_CHARS = 8000   # title, H1, description and the start of the content (~2000 tokens) set the topic

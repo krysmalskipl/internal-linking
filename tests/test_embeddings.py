@@ -53,7 +53,7 @@ def test_pages_are_embedded_in_batches_of_20_and_cached(tmp_path, api):
     pages = [page(f"https://example.pl/p{i}/", f"Strona {i}", f"tekst o temacie {i}") for i in range(45)]
     vectors, cost = embeddings.embed_pages(pages, tmp_path)
     assert [len(c["input"]) for c in api] == [20, 20, 5]
-    assert {(c["model"], c["dimensions"]) for c in api} == {("qwen/qwen3.7-text-embedding", 768)}
+    assert {(c["model"], c["dimensions"]) for c in api} == {("qwen/qwen3-embedding-8b", 768)}
     assert len(vectors) == 45 and cost == pytest.approx(0.003)
     v = vectors["https://example.pl/p7/"]
     assert v.shape == (768,) and np.linalg.norm(v) == pytest.approx(1, abs=1e-3)
@@ -73,10 +73,10 @@ def test_pages_are_embedded_in_batches_of_20_and_cached(tmp_path, api):
 
 
 def test_model_and_dimensions_can_be_changed(tmp_path, api, monkeypatch):
-    monkeypatch.setenv("EMBEDDING_MODEL", "qwen/qwen3-embedding-8b")
+    monkeypatch.setenv("EMBEDDING_MODEL", "qwen/qwen3-embedding-4b")
     monkeypatch.setenv("EMBEDDING_DIMENSIONS", "256")
     vectors, _ = embeddings.embed_pages([page("https://example.pl/", "Start", "tekst")], tmp_path)
-    assert (api[0]["model"], api[0]["dimensions"]) == ("qwen/qwen3-embedding-8b", 256)
+    assert (api[0]["model"], api[0]["dimensions"]) == ("qwen/qwen3-embedding-4b", 256)
     assert vectors["https://example.pl/"].shape == (256,)
 
 
@@ -175,7 +175,7 @@ def test_run_goes_on_without_embeddings_when_the_api_fails(site, tmp_path, api, 
     monkeypatch.setattr(pairs, "judge", fake_judge)
 
     def broken(url, body, retries=4, timeout=60):
-        raise JevError("API error 400 qwen/qwen3.7-text-embedding is not a valid model ID")
+        raise JevError("API error 400 qwen/qwen3-embedding-8b is not a valid model ID")
 
     monkeypatch.setattr(embeddings, "post", broken)
     pipeline.process("example.pl", run_args(), load_config())
