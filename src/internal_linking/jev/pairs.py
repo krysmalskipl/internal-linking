@@ -237,6 +237,8 @@ def reject_reason(row: dict, cfg: dict) -> str:
         return "off_topic"
     if row["jev_anchor"] < cfg["anchor_min"]:
         return "weak_anchor"
+    if row.get("similarity") is not None and row["similarity"] < cfg.get("similarity_min", 0):
+        return "low_similarity"  # the two pages are far apart in meaning (embeddings.py)
     if row["score"] < cfg["score_min"]:
         return row["jev_verdict"] if row["jev_verdict"] != "ok" else "low_score"
     return ""

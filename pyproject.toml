@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "internal-linking"
-version = "0.1.0"
-description = "Internal link suggestions for any website, judged by the Jev model via OpenRouter"
+version = "0.2.0"
+description = "Internal link suggestions for any website, judged by the Jev model via OpenRouter, with an embeddings-based link graph"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -15,6 +15,7 @@ dependencies = [
     "requests>=2.31",
     "beautifulsoup4>=4.12",
     "scikit-learn>=1.5",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +28,7 @@ internal-linking = "internal_linking.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-internal_linking = ["config.json"]
+internal_linking = ["config.json", "vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

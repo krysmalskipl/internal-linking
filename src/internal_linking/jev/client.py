@@ -1,4 +1,4 @@
-"""Jev (TypeSafe) client for the OpenRouter decisions API.
+"""OpenRouter client: Jev (TypeSafe) decisions and, through post(), the embeddings API.
 
 Raises exceptions instead of exiting and retries on 429 / 5xx. The API key comes from the
 OPENROUTER_API_KEY environment variable or a .env file in the working directory.
@@ -41,11 +41,10 @@ def api_key() -> str:
     return key
 
 
-def decide(state: dict, questions: dict, retries: int = 4, timeout: int = 60) -> dict:
-    body = {"model": os.environ.get("JEV_MODEL", MODEL_DEFAULT), "state": state, "questions": questions}
+def post(url: str, body: dict, retries: int = 4, timeout: int = 60) -> dict:
+    """POST to an OpenRouter endpoint; retries on 429, 5xx and network errors."""
     headers = {"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json",
                "X-Title": "internal-linking"}
-    url = os.environ.get("JEV_API_URL", API_URL_DEFAULT)
     for attempt in range(retries + 1):
         try:
             r = requests.post(url, json=body, headers=headers, timeout=timeout)
@@ -59,3 +58,8 @@ def decide(state: dict, questions: dict, retries: int = 4, timeout: int = 60) ->
                 raise JevError(f"API error {r.status_code} {HINTS.get(r.status_code, '')}\n{r.text[:500]}")
         time.sleep(2 ** attempt)
     raise JevError("unreachable")
+
+
+def decide(state: dict, questions: dict, retries: int = 4, timeout: int = 60) -> dict:
+    body = {"model": os.environ.get("JEV_MODEL", MODEL_DEFAULT), "state": state, "questions": questions}
+    return post(os.environ.get("JEV_API_URL", API_URL_DEFAULT), body, retries, timeout)
