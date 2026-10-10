@@ -1,3 +1,3 @@
-"""Internal link suggestions for any website, judged by the Jev model via OpenRouter."""
+"""Internal link suggestions for any website, judged by the Jev model via OpenRouter, with an embeddings-based link graph."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

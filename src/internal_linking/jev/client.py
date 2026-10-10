@@ -1,7 +1,8 @@
-"""Jev (TypeSafe) client for the OpenRouter decisions API.
+"""API client: Jev decisions (TypeSafe's own API or OpenRouter) and, through post(), the embeddings API.
 
-Raises exceptions instead of exiting and retries on 429 / 5xx. The API key comes from the
-OPENROUTER_API_KEY environment variable or a .env file in the working directory.
+Jev goes to TypeSafe directly when TYPESAFE_API_KEY is set, otherwise through OpenRouter with
+OPENROUTER_API_KEY; embeddings always use OpenRouter. Raises exceptions instead of exiting and
+retries on 429 / 5xx. Keys come from the environment or a .env file in the working directory.
 """
 import os
 import time
@@ -11,9 +12,10 @@ import requests
 
 API_URL_DEFAULT = "https://openrouter.ai/api/alpha/decisions"
 MODEL_DEFAULT = "typesafe/jev-1.13"
+TYPESAFE_URL_DEFAULT = "https://api.typesafe.ai/v1/systemone"
+TYPESAFE_MODEL_DEFAULT = "jev-1.13.0"  # the same Jev version as typesafe/jev-1.13 on OpenRouter
 RETRY_STATUSES = {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}  # 52x: Cloudflare edge errors
-HINTS = {401: "missing or invalid key", 402: "no credits left on the OpenRouter account",
-         429: "rate limited"}
+HINTS = {401: "missing or invalid key", 402: "no credits left on the account", 429: "rate limited"}
 
 
 class JevError(RuntimeError):
@@ -32,20 +34,39 @@ def load_dotenv(path: Path | None = None) -> None:
             os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 
-def api_key() -> str:
+def env(name: str) -> str:
     load_dotenv()
-    key = os.environ.get("OPENROUTER_API_KEY")
+    return os.environ.get(name, "").strip()
+
+
+def api_key() -> str:
+    """The OpenRouter key (embeddings, and Jev when there is no TypeSafe key)."""
+    key = env("OPENROUTER_API_KEY")
     if not key:
         raise JevError("OPENROUTER_API_KEY is not set. Put it in .env in the working directory "
                        "(OPENROUTER_API_KEY=sk-or-...) or export it.")
     return key
 
 
-def decide(state: dict, questions: dict, retries: int = 4, timeout: int = 60) -> dict:
-    body = {"model": os.environ.get("JEV_MODEL", MODEL_DEFAULT), "state": state, "questions": questions}
-    headers = {"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json",
+def jev_provider() -> str:
+    return "TypeSafe" if env("TYPESAFE_API_KEY") else "OpenRouter"
+
+
+def jev_endpoint() -> tuple[str, str, str]:
+    """(url, model, key) for Jev: TypeSafe's own API when TYPESAFE_API_KEY is set (an empty value
+    counts as not set), otherwise OpenRouter."""
+    if key := env("TYPESAFE_API_KEY"):
+        return env("TYPESAFE_API_URL") or TYPESAFE_URL_DEFAULT, env("TYPESAFE_MODEL") or TYPESAFE_MODEL_DEFAULT, key
+    if not env("OPENROUTER_API_KEY"):
+        raise JevError("No key for Jev. Put TYPESAFE_API_KEY (from console.typesafe.ai) or OPENROUTER_API_KEY "
+                       "in .env in the working directory, or export it.")
+    return env("JEV_API_URL") or API_URL_DEFAULT, env("JEV_MODEL") or MODEL_DEFAULT, api_key()
+
+
+def post(url: str, body: dict, key: str | None = None, retries: int = 4, timeout: int = 60) -> dict:
+    """POST with a bearer key (the OpenRouter key by default); retries on 429, 5xx and network errors."""
+    headers = {"Authorization": f"Bearer {key or api_key()}", "Content-Type": "application/json",
                "X-Title": "internal-linking"}
-    url = os.environ.get("JEV_API_URL", API_URL_DEFAULT)
     for attempt in range(retries + 1):
         try:
             r = requests.post(url, json=body, headers=headers, timeout=timeout)
@@ -59,3 +80,8 @@ def decide(state: dict, questions: dict, retries: int = 4, timeout: int = 60) ->
                 raise JevError(f"API error {r.status_code} {HINTS.get(r.status_code, '')}\n{r.text[:500]}")
         time.sleep(2 ** attempt)
     raise JevError("unreachable")
+
+
+def decide(state: dict, questions: dict, retries: int = 4, timeout: int = 60) -> dict:
+    url, model, key = jev_endpoint()
+    return post(url, {"model": model, "state": state, "questions": questions}, key, retries, timeout)

@@ -1,8 +1,9 @@
 """The unattended run for one or more domains.
 
 crawl the sitemap → exact/partial phrases in paragraphs and lists (anchors.py) → deterministic
-rules → Jev judges every pair (jev/pairs.py, cached) → thresholds from config.json → at most N
-links per page → data/<domain>/links.csv, recommendations.csv and report.html.
+rules → page embeddings (embeddings.py, cached) → Jev judges every pair (jev/pairs.py, cached) →
+thresholds from config.json → at most N links per page → data/<domain>/links.csv,
+recommendations.csv and report.html (with the link graph).
 
 Two modes: automatic (targets and phrases come from the pages' titles) and keyword mode
 (--keywords: only the phrases you list, see keywords.py).
@@ -14,53 +15,20 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from . import embeddings
 from . import keywords as kw
 from .anchors import NO_LINK_BLOCKS, AnchorFinder, content_words, detect_lang, text_keys, word_key
-from .common import append_jsonl, data_dir, norm_url, read_jsonl, write_csv
+from .common import Progress, append_jsonl, clean_title, data_dir, norm_url, read_jsonl, site_suffixes, write_csv
 from .config import load_config
 from .crawl import BOILERPLATE_SHARE, crawl, strip_boilerplate
 from .jev import pairs
-from .jev.client import JevError, api_key
+from .jev.client import JevError, jev_endpoint, jev_provider
 from .report import write_report
 
 COST_PER_PAIR = 0.00007    # estimate for --dry-run (about 600 input tokens per pair)
 FIELDS = ["decision", "decision_reason", "lang", "source_url", "source_title", "placement", "anchor", "anchor_type",
-          "target_url", "target_title", "in_menu", "score", "jev_context", "jev_anchor", "jev_value",
+          "target_url", "target_title", "in_menu", "score", "similarity", "jev_context", "jev_anchor", "jev_value",
           "jev_cannibalisation", "jev_verdict", "context"]
-
-
-class Progress:
-    """Prints "label: done/total unit" every 10%, at least every 5 seconds and at the end, so long
-    steps never look stuck."""
-
-    def __init__(self, label: str, total: int, unit: str):
-        self.label, self.total, self.unit, self.done = label, total, unit, 0
-        self.every = max(1, total // 10)
-        self.last = time.monotonic()
-
-    def step(self) -> None:
-        self.done += 1
-        now = time.monotonic()
-        if self.done % self.every == 0 or self.done == self.total or now - self.last >= 5:
-            print(f"  {self.label}: {self.done}/{self.total} {self.unit}")
-            self.last = now
-
-
-def site_suffixes(pages: list[dict]) -> set[str]:
-    """Title endings repeated across many pages (e.g. ' - Site name')."""
-    c = Counter()
-    for p in pages:
-        m = re.search(r"\s[-–|]\s[^-–|]+$", p["title"])
-        if m:
-            c[m.group(0)] += 1
-    return {s for s, n in c.items() if n >= max(3, 0.1 * len(pages))}
-
-
-def clean_title(title: str, suffixes: set[str]) -> str:
-    for s in suffixes:
-        if title.endswith(s):
-            return title[: -len(s)].strip()
-    return title
 
 
 def sitewide_links(pages: list[dict]) -> dict[str, set[str]]:
@@ -278,8 +246,8 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
     todo = {k: (r["_state"], r["lang"]) for k, r in zip(keys, rows) if k not in cache}
     cost, failed = 0.0, 0
     if todo:
-        api_key()  # fail fast with a clear message when the key is missing
-        print(f"judging {len(todo)} pairs with Jev ({len(rows) - len(todo)} cached)...")
+        jev_endpoint()  # fail fast with a clear message when no key is set
+        print(f"judging {len(todo)} pairs with Jev via {jev_provider()} ({len(rows) - len(todo)} cached)...")
     progress = Progress("judged", len(todo), "pairs")
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {k: ex.submit(pairs.judge, st, lang) for k, (st, lang) in todo.items()}
@@ -299,8 +267,13 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
     for r, k in zip(rows, keys):
         if k in cache:
             r.update(pairs.summarize(cache[k], r["lang"]))
-    print(f"Jev: {len(todo) - failed} new pairs, {len(rows) - len(todo)} cached, cost ${cost:.4f}")
+    print(f"Jev: {len(todo) - failed} new pairs, {len(rows) - len(todo)} cached, cost {jev_cost(cost, 4)}")
     return cost
+
+
+def jev_cost(cost: float, digits: int = 3) -> str:
+    """TypeSafe's own API may not report a cost per call - then it is on the TypeSafe bill."""
+    return "billed by TypeSafe" if not cost and jev_provider() == "TypeSafe" else f"${cost:.{digits}f}"
 
 
 def select(rows: list[dict], cfg: dict, max_links: int) -> None:
@@ -353,8 +326,18 @@ def process(domain: str, args, cfg: dict) -> dict:
         cache = {r["key"] for r in read_jsonl(ddir / "jev_pairs.jsonl")}
         new = sum(pairs.cache_key(r["_state"], r["lang"]) not in cache for r in rows)
         print(f"to judge with Jev: {new} (the rest is cached), estimated cost ${new * COST_PER_PAIR:.3f}")
+        if not args.no_embeddings:
+            print(f"pages to embed: {embeddings.count_new(pages, ddir)} (the rest is cached)")
         return {"domain": domain, "pairs": len(rows), "to judge": new}
 
+    vectors, emb_cost = {}, 0.0
+    if not args.no_embeddings:
+        try:
+            vectors, emb_cost = embeddings.embed_pages(pages, ddir, min(args.workers, 4))
+        except JevError as e:
+            print(f"  ! embeddings: {str(e)[:300]}\n    continuing without similarity and the topic map - check "
+                  f"EMBEDDING_MODEL in .env, then run `internal-linking embed --domain {domain}`")
+    embeddings.add_similarity(rows, vectors)
     cost = judge(rows, ddir, args.workers) if rows else 0.0
     select(rows, cfg, args.max_links or cfg["max_links_per_page"])
     accepted = [r for r in rows if r["decision"] == "accept"]
@@ -370,12 +353,15 @@ def process(domain: str, args, cfg: dict) -> dict:
         write_csv(ddir / "keywords_summary.csv", summary, list(summary[0].keys()) if summary else ["keyword"])
     pages_with = len({r["source_url"] for r in accepted})
     max_links = args.max_links or cfg["max_links_per_page"]
-    write_report(ddir / "report.html", domain, rows, cfg, max_links, {"Jev cost": f"${cost:.3f}"}, pages=pages)
+    stats = {"Jev cost": jev_cost(cost)}
+    if vectors:
+        stats["Embeddings cost"] = f"${emb_cost:.3f}"
+    write_report(ddir / "report.html", domain, rows, cfg, max_links, stats, pages=pages, vectors=vectors)
     print(f"links to insert: {len(accepted)} on {pages_with} pages "
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")
     print(f"done in {time.monotonic() - started:.0f} s")
     print(f"→ {ddir / 'report.html'}\n→ {ddir / 'links.csv'}")
-    return {"domain": domain, "links": len(accepted), "pages": pages_with, "cost": round(cost, 4)}
+    return {"domain": domain, "links": len(accepted), "pages": pages_with, "cost": round(cost + emb_cost, 4)}
 
 
 def run(args) -> None:
@@ -415,6 +401,8 @@ def add_parser(sub) -> None:
     p.add_argument("--targets-file", help="file with the URLs (or paths) links may point to, one per line")
     p.add_argument("--no-crawl", action="store_true", help="reuse the saved pages.jsonl")
     p.add_argument("--dry-run", action="store_true", help="count pairs and estimate cost without calling Jev")
+    p.add_argument("--no-embeddings", action="store_true",
+                   help="skip page embeddings (no similarity, no topic map in the graph)")
     p.add_argument("--sitemap", help="sitemap URL (single domain only)")
     p.add_argument("--delay", type=float, default=0.5, help="seconds between page downloads")
     p.add_argument("--workers", type=int, default=12, help="parallel Jev calls (lower it on 429 errors)")

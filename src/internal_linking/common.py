@@ -1,6 +1,9 @@
-"""Shared helpers: data directories, URL normalisation, JSONL and CSV I/O."""
+"""Shared helpers: data directories, URL normalisation, page titles, JSONL and CSV I/O, progress messages."""
 import csv
 import json
+import re
+import time
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -36,6 +39,23 @@ def is_internal(url: str, domain: str) -> bool:
     return bare_host(urlsplit(url).netloc) == bare_host(domain)
 
 
+def site_suffixes(pages: list[dict]) -> set[str]:
+    """Title endings repeated across many pages (e.g. ' - Site name')."""
+    c = Counter()
+    for p in pages:
+        m = re.search(r"\s[-–|]\s[^-–|]+$", p["title"])
+        if m:
+            c[m.group(0)] += 1
+    return {s for s, n in c.items() if n >= max(3, 0.1 * len(pages))}
+
+
+def clean_title(title: str, suffixes: set[str]) -> str:
+    for s in suffixes:
+        if title.endswith(s):
+            return title[: -len(s)].strip()
+    return title
+
+
 def read_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -65,3 +85,20 @@ def write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
+
+
+class Progress:
+    """Prints "label: done/total unit" every 10%, at least every 5 seconds and at the end, so long
+    steps never look stuck."""
+
+    def __init__(self, label: str, total: int, unit: str):
+        self.label, self.total, self.unit, self.done = label, total, unit, 0
+        self.every = max(1, total // 10)
+        self.last = time.monotonic()
+
+    def step(self, n: int = 1) -> None:
+        before, self.done = self.done, self.done + n
+        now = time.monotonic()
+        if self.done // self.every > before // self.every or self.done == self.total or now - self.last >= 5:
+            print(f"  {self.label}: {self.done}/{self.total} {self.unit}")
+            self.last = now
