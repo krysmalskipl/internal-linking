@@ -6,7 +6,7 @@ Internal link suggestions for any website, in one command. The tool finds phrase
 
 ![Interactive report: filters in % on the left, each link shown as where (the paragraph with the highlighted phrase), what (the link text) and where to (the target page)](examples/report.png)
 
-Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.pl.html) - a real run on a 43-page SEO blog: 28 links on 20 pages, 140 suggestions judged, $0.01. Download it and open it in a browser. (It was made with 0.1.0, so it has no Graph view or similarity yet - see [Embeddings and the link graph](#embeddings-and-the-link-graph).)
+Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.pl.html) - a real run on a 43-page SEO blog: 28 links on 20 pages, 140 suggestions judged, $0.01. Download it and open it in a browser. (Made with 0.1.0 - no Graph view yet.)
 
 ## Why?
 
@@ -86,39 +86,13 @@ kitchen renovation,,partial
 
 ## Embeddings and the link graph
 
-Jev judges one passage and one link at a time. Embeddings add the view from above: how close two pages are in meaning, and how the site hangs together.
+Every page also gets one embedding - from its title, H1, description and the start of its content - with [`qwen/qwen3-embedding-8b`](https://openrouter.ai/qwen/qwen3-embedding-8b) through OpenRouter: 768 dimensions, the same API key, cached in `embeddings.jsonl`, at most about $0.02 per 1,000 pages. They give:
 
-**What is embedded.** One vector per crawled page, from its title, H1, meta description and the start of its content - template blocks (menus, footers, repeated sidebars) are already removed by the crawler - cut to the first 8,000 characters (about 2,000 tokens), which is plenty to say what a page is about. Pages in every language are embedded; comparisons stay within one language version.
+- **similarity** of the source and the target page on every link - a CSV column, a slider in the report and an optional `similarity_min` threshold in `config.json` (off by default),
+- the **Graph** view - the whole site on a topic map with the links today and the new links; click a page and its linked pages gather around it on similarity rings while the rest of the site moves aside, with a side panel and the closest pages that are not linked yet,
+- similarity histograms of the links today and the new links.
 
-**Model.** [`qwen/qwen3-embedding-8b`](https://openrouter.ai/qwen/qwen3-embedding-8b) (Qwen3 Embedding 8B: multilingual including Polish, 33K-token context, $0.01 per million tokens on OpenRouter at the time of writing) through OpenRouter's embeddings endpoint (`/api/v1/embeddings`). Its vectors have 4,096 dimensions; the tool asks for `dimensions: 768` - plenty to compare pages, and five times smaller to store and compare. It uses the same `OPENROUTER_API_KEY` as Jev. Change the model or the size in `.env` or the environment:
-
-```bash
-EMBEDDING_MODEL=qwen/qwen3-embedding-8b   # any embedding model on OpenRouter, e.g. qwen/qwen3-embedding-4b
-EMBEDDING_DIMENSIONS=768
-```
-
-If a provider ignores `dimensions` and returns a longer vector, it is cut to the first 768 values and normalised again - Qwen embeddings are trained Matryoshka-style, so the start of a vector is itself a valid smaller embedding. Vectors are stored normalised (length 1), so the dot product of two pages is their cosine similarity.
-
-**How it is sent and cached.** 20 texts per request, 4 requests in parallel. Every vector is saved to `data/<domain>/embeddings.jsonl` under a key made of the model, the dimensions and the embedded text, so a re-run sends only new or changed pages, and switching models re-embeds everything once. The cost of the first run is about (characters of the site's pages ÷ 4) tokens at the model's OpenRouter price - at most about 2,000 tokens per page, so a 1,000-page site is about 2 million tokens, $0.02 with Qwen3 Embedding 8B; after that, only changed pages cost anything. `--dry-run` shows how many pages would be embedded.
-
-**What the vectors are used for:**
-
-1. **`similarity` on every suggestion** - the cosine similarity of the source and the target page (0-100% in the report; the absolute values depend on the model and the site, so compare links with each other rather than with a fixed number). It is independent of the phrase: Jev checks that the passage fits the target, similarity checks that the two pages as a whole belong together. It is a column in both CSVs, a bar on every link in the report and a *Page similarity* slider.
-2. **An optional threshold** - `similarity_min` in `config.json` (default `0`, off) rejects pairs of pages that are too far apart (`low_similarity`). Look at the histograms in the Graph view before you set it. Pairs without vectors (e.g. after a failed API call) are never rejected by it.
-3. **The topic map** - t-SNE of the vectors (after PCA to 50 dimensions; PCA alone for sites under 12 pages, fixed seed, so the same pages give the same map). Pages close on the map are close in meaning, so a long line across the map is a link between distant topics, and a tight cluster with few lines is a topic that is not linked together.
-4. **Closest pages without a link** - for every page, the 5 most similar pages in the same language version that it is not linked with in either direction today. They are link opportunities even where no matching phrase exists yet (e.g. for a new paragraph).
-
-**The Graph view** (drawn with [force-graph](https://github.com/vasturiano/force-graph) 1.47.4, MIT, inlined in the report, so it works offline):
-
-- every crawled page is a circle: red = orphan (no links in from other pages' content today), amber = weak (1-2), grey = 3 or more; the size grows with the links in after the changes; the largest pages are labelled, the rest on hover or zoom
-- lines: grey = links in content today, purple with an arrow = the new links currently selected by the filters on the left, dashed green = similar but not linked (off by default, always shown for the page in focus)
-- *By topic* places pages on the topic map, *By links* lets linked pages pull together (link length from similarity); *Pages with new links* shows only the part of the site that changes (default above 1,500 pages)
-- **click a page** (or find it in the search box, or use *graph ›* in the Pages view) and it zooms in: its pages - links today, new links and the closest unlinked ones - gather around it on rings of similarity (90 / 75 / 60 / 45%, the more similar, the closer) and the rest of the site moves aside; a side panel lists them grouped (new links out / in, links out / in today, closest without a link) with their similarity and the anchors of the new links; click any of them to move the focus there, Esc or a click on the background to go back
-- below the graph: links today, new links, orphans today → after the changes, unlinked page pairs at least as similar as a typical link today, and histograms of the similarity of the links today and of the new links on one scale (with a table view)
-
-Without embeddings (the API failed, the model is unavailable, or `--no-embeddings`) the run carries on: the report has no similarity, the graph uses *By links* and has no topic map or closest pages. Run `internal-linking embed --domain example.com` later to add them without crawling or judging again.
-
-Page texts are sent to OpenRouter and the embedding model's provider, as they already are for Jev.
+`EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` in `.env` change the model; `--no-embeddings` skips them. If the API fails, the run carries on without them and `internal-linking embed --domain example.com` adds them later. How it works in detail: [docs/embeddings.md](docs/embeddings.md).
 
 ## How it works
 
@@ -128,7 +102,7 @@ Page texts are sent to OpenRouter and the embedding model's provider, as they al
    - `partial` - at least two words of the target's name, including a distinctive one,
    - existing link text and code are never used; no single words or generic fillers.
 3. **Rules** (`pipeline.py`) - no targets the page already links to (template links - menu, footer, sidebars, counted per language version - don't count), no target whose title or H1 is shared by several pages (e.g. the brand name as H1), same language only, no phrases repeated like a template (e.g. an author byline), a phrase that is the exact name of another page is reserved for that page.
-4. **Embeddings** (`embeddings.py`) - one vector per page (see above), cached; the similarity of the two pages goes on every pair.
+4. **Embeddings** (`embeddings.py`) - one vector per page, cached; the similarity of the two pages goes on every pair ([details](docs/embeddings.md)).
 5. **Jev** (`jev/pairs.py`) - one call per pair, with the source page, the section heading, the passage and its neighbouring passages, and the target page; closed questions: does the paragraph discuss the target's topic, is the phrase a natural anchor, link value (0-4), cannibalisation, overall verdict with a reason code. Inspired by the Jev mode in [newsjack](https://github.com/elvisun/newsjack). Print the questions with `internal-linking questions`.
 6. **Selection** - thresholds from `config.json` (shared by all domains), one link per phrase, at most N links per page by score.
 7. **Report** (`report.py`) - the HTML report with the graph data (pages, links today, topic map, closest pages) built in.
@@ -165,38 +139,19 @@ tests/                # pytest, no network: pip install -e ".[dev]" && pytest
 ## Notes
 
 - The API client is `jev/client.py` (model `typesafe/jev-1.13`; `JEV_MODEL` / `JEV_API_URL` override the defaults). Jev is served from OpenRouter's alpha decisions endpoint, which may change.
-- Embeddings use `qwen/qwen3-embedding-8b` by default (`EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `EMBEDDING_API_URL` override it). If the embeddings API fails (e.g. a model that is no longer listed), the run prints the API error and carries on without embeddings - fix `.env` and run `internal-linking embed`.
 - The crawler identifies itself as `internal-linking`, respects robots.txt and waits 0.5 s between requests by default (`--delay`). Only run it on sites you own or have permission to analyse.
 
 ## Changelog
 
-The package is public, so every release that changes the output or the command line is listed here. Versions follow [semantic versioning](https://semver.org/); before 1.0, a minor version may change the output files.
-
 ### 0.2.0 - 2026-10-10
-
-Added
-- Page embeddings (`embeddings.py`): one vector per page with `qwen/qwen3-embedding-8b` through OpenRouter, 768 dimensions, cached in `embeddings.jsonl`; `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS` and `EMBEDDING_API_URL` to change them.
-- `similarity` (source page ↔ target page) on every suggestion: a column in `recommendations.csv` and `links.csv`, a bar on every link and a *Page similarity* slider in the report, and an optional `similarity_min` threshold in `config.json` (default 0, off) with the reject reason `low_similarity`.
-- *Graph* view in the report: the whole site with links today and the new links, a topic map from the embeddings or a link-based layout, click-to-focus with similarity rings and a side panel, closest unlinked pages, similarity histograms and summary tiles. force-graph 1.47.4 (MIT) is inlined, so the report still works offline.
-- `internal-linking embed --domain ...`: embeds the saved pages and rebuilds the report, without crawling or calling Jev.
-- `run --no-embeddings` to skip the embeddings; `--dry-run` also counts the pages to embed.
-- *Pages* view: a *Links out today* column and a *graph ›* shortcut.
-- `numpy` is now a direct dependency (it already came with scikit-learn).
-
-Changed
-- The run continues without similarity and the topic map when the embeddings API fails, and says how to add them later.
-- `report` loads cached embeddings and fills in the similarity of results saved before embeddings existed.
-- The report's CSV export has a `similarity` column.
-- `recommendations.csv` and `links.csv` have a new `similarity` column after `score`; scripts that read columns by position need updating.
+- Page embeddings with `qwen/qwen3-embedding-8b` through OpenRouter (768 dimensions, cached) and a `similarity` score on every link, with an optional `similarity_min` threshold.
+- Graph view in the report: topic map, links today and new links, click-to-focus with similarity rings, closest unlinked pages, similarity histograms. Works offline (force-graph, MIT, inlined).
+- New `embed` command and `run --no-embeddings`; `--dry-run` also counts the pages to embed.
+- Pages view: links out today and a shortcut to the graph.
+- **Breaking:** `recommendations.csv` and `links.csv` have a new `similarity` column after `score`.
 
 ### 0.1.0 - 2026-09-29
-
-First public version.
-- Crawl from the sitemap with robots.txt support, typed content blocks and template-block removal that works on any theme.
-- Exact and partial phrase matching (inflection-aware) for Polish and English, language detected per page.
-- One Jev call per pair with closed questions (context, anchor, value, cannibalisation, verdict), cached; retries on 429, 5xx and Cloudflare 52x errors; 12 parallel calls by default.
-- Keyword mode (`--keywords`), page filters (`--sources`, `--targets`, `--sources-file`, `--targets-file`) and a fast word index for large sites.
-- Interactive report (Linking to, Linked from, Pages, Keywords, Rejected; light / dark theme) and the `report` command; quality tools `sample`, `label`, `evaluate`.
+- First public version: sitemap crawl, exact / partial phrase matching (Polish, English), one Jev call per pair, keyword mode, page filters, interactive report, quality tools.
 
 ## License
 
