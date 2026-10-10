@@ -10,7 +10,7 @@ One vector per crawled page, from its title, H1, meta description and the start 
 
 ## Model
 
-[`qwen/qwen3-embedding-8b`](https://openrouter.ai/qwen/qwen3-embedding-8b) (Qwen3 Embedding 8B: multilingual including Polish, 33K-token context, $0.01 per million tokens on OpenRouter at the time of writing) through OpenRouter's embeddings endpoint (`/api/v1/embeddings`). Its vectors have 4,096 dimensions; the tool asks for `dimensions: 768` - plenty to compare pages, and five times smaller to store and compare. It uses the same `OPENROUTER_API_KEY` as Jev. Change the model or the size in `.env` or the environment:
+[`qwen/qwen3-embedding-8b`](https://openrouter.ai/qwen/qwen3-embedding-8b) (Qwen3 Embedding 8B: multilingual including Polish, 33K-token context, $0.01 per million tokens on OpenRouter at the time of writing) through OpenRouter's embeddings endpoint (`/api/v1/embeddings`). Its vectors have 4,096 dimensions; the tool asks for `dimensions: 768` - plenty to compare pages, and five times smaller to store and compare. It uses `OPENROUTER_API_KEY` - also when Jev runs on TypeSafe's own API. Change the model or the size in `.env` or the environment:
 
 ```bash
 EMBEDDING_MODEL=qwen/qwen3-embedding-8b   # any embedding model on OpenRouter, e.g. qwen/qwen3-embedding-4b
@@ -42,4 +42,4 @@ Drawn with [force-graph](https://github.com/vasturiano/force-graph) 1.47.4 (MIT)
 
 Without embeddings (the API failed, the model is unavailable, or `--no-embeddings`) the run carries on: the report has no similarity, the graph uses *By links* and has no topic map or closest pages. Run `internal-linking embed --domain example.com` later to add them without crawling or judging again.
 
-Page texts are sent to OpenRouter and the embedding model's provider, as they already are for Jev.
+Page texts are sent to OpenRouter and the embedding model's provider, as passages already are for Jev.

@@ -22,7 +22,7 @@ from .common import Progress, append_jsonl, clean_title, data_dir, norm_url, rea
 from .config import load_config
 from .crawl import BOILERPLATE_SHARE, crawl, strip_boilerplate
 from .jev import pairs
-from .jev.client import JevError, api_key
+from .jev.client import JevError, jev_endpoint, jev_provider
 from .report import write_report
 
 COST_PER_PAIR = 0.00007    # estimate for --dry-run (about 600 input tokens per pair)
@@ -246,8 +246,8 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
     todo = {k: (r["_state"], r["lang"]) for k, r in zip(keys, rows) if k not in cache}
     cost, failed = 0.0, 0
     if todo:
-        api_key()  # fail fast with a clear message when the key is missing
-        print(f"judging {len(todo)} pairs with Jev ({len(rows) - len(todo)} cached)...")
+        jev_endpoint()  # fail fast with a clear message when no key is set
+        print(f"judging {len(todo)} pairs with Jev via {jev_provider()} ({len(rows) - len(todo)} cached)...")
     progress = Progress("judged", len(todo), "pairs")
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {k: ex.submit(pairs.judge, st, lang) for k, (st, lang) in todo.items()}
@@ -267,8 +267,13 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
     for r, k in zip(rows, keys):
         if k in cache:
             r.update(pairs.summarize(cache[k], r["lang"]))
-    print(f"Jev: {len(todo) - failed} new pairs, {len(rows) - len(todo)} cached, cost ${cost:.4f}")
+    print(f"Jev: {len(todo) - failed} new pairs, {len(rows) - len(todo)} cached, cost {jev_cost(cost, 4)}")
     return cost
+
+
+def jev_cost(cost: float, digits: int = 3) -> str:
+    """TypeSafe's own API may not report a cost per call - then it is on the TypeSafe bill."""
+    return "billed by TypeSafe" if not cost and jev_provider() == "TypeSafe" else f"${cost:.{digits}f}"
 
 
 def select(rows: list[dict], cfg: dict, max_links: int) -> None:
@@ -348,7 +353,7 @@ def process(domain: str, args, cfg: dict) -> dict:
         write_csv(ddir / "keywords_summary.csv", summary, list(summary[0].keys()) if summary else ["keyword"])
     pages_with = len({r["source_url"] for r in accepted})
     max_links = args.max_links or cfg["max_links_per_page"]
-    stats = {"Jev cost": f"${cost:.3f}"}
+    stats = {"Jev cost": jev_cost(cost)}
     if vectors:
         stats["Embeddings cost"] = f"${emb_cost:.3f}"
     write_report(ddir / "report.html", domain, rows, cfg, max_links, stats, pages=pages, vectors=vectors)

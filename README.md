@@ -1,12 +1,25 @@
 # internal-linking
 
-Internal link suggestions for any website, in one command. The tool finds phrases that **already exist** in your content (exact or partial match of another page's name) and asks [Jev](https://openrouter.ai/) - a typed-decision model by TypeSafe, available through OpenRouter - to judge every page → phrase → target pair. Every page is also turned into an embedding (Qwen3 Embedding 8B, 768 dimensions, also through OpenRouter), so each link gets a similarity score and the report can draw the whole site as an interactive graph. The output is a CMS-agnostic HTML report and CSV with links ready to insert.
+Internal link suggestions for any website, in one command. The tool finds phrases that **already exist** in your content (exact or partial match of another page's name) and asks [Jev](https://openrouter.ai/) - a typed-decision model by TypeSafe, called on TypeSafe's own API or through OpenRouter - to judge every page → phrase → target pair. Every page is also turned into an embedding (Qwen3 Embedding 8B, 768 dimensions, also through OpenRouter), so each link gets a similarity score and the report can draw the whole site as an interactive graph. The output is a CMS-agnostic HTML report and CSV with links ready to insert.
 
 > Works with Polish and English pages. The language is detected per page (`<html lang>`, or the text when the attribute is missing), so bilingual sites get links within each language version. Other languages are skipped.
 
 ![Interactive report: filters in % on the left, each link shown as where (the paragraph with the highlighted phrase), what (the link text) and where to (the target page)](examples/report.png)
 
 Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.pl.html) - a real run on a 43-page SEO blog: 28 links on 20 pages, 140 suggestions judged, $0.01. Download it and open it in a browser. (Made with 0.1.0 - no Graph view yet.)
+
+## Changelog
+
+### 0.2.0 - 2026-10-10
+- Page embeddings with `qwen/qwen3-embedding-8b` through OpenRouter (768 dimensions, cached) and a `similarity` score on every link, with an optional `similarity_min` threshold.
+- Graph view in the report: topic map, links today and new links, click-to-focus with similarity rings, closest unlinked pages, similarity histograms. Works offline (force-graph, MIT, inlined).
+- Jev on TypeSafe's own API with `TYPESAFE_API_KEY` in `.env`; when it is empty, Jev goes through OpenRouter as before.
+- New `embed` command and `run --no-embeddings`; `--dry-run` also counts the pages to embed.
+- Pages view: links out today and a shortcut to the graph.
+- **Breaking:** `recommendations.csv` and `links.csv` have a new `similarity` column after `score`.
+
+### 0.1.0 - 2026-09-29
+- First public version: sitemap crawl, exact / partial phrase matching (Polish, English), one Jev call per pair, keyword mode, page filters, interactive report, quality tools.
 
 ## Why?
 
@@ -23,17 +36,17 @@ The default thresholds were calibrated on Polish service and blog sites; on a ne
 ```bash
 git clone https://github.com/krysmalskipl/internal-linking && cd internal-linking
 python3 -m venv .venv && .venv/bin/pip install -e .
-cp .env.example .env   # put your OpenRouter API key in .env
+cp .env.example .env   # put your API keys in .env
 ```
 
-One OpenRouter key covers both Jev and the embeddings.
+Keys in `.env`: `OPENROUTER_API_KEY` covers both Jev and the embeddings. With `TYPESAFE_API_KEY` (from [console.typesafe.ai](https://console.typesafe.ai)) Jev is called on TypeSafe's own API instead - the same version, `jev-1.13.0`, so the thresholds and cached answers still apply - and OpenRouter is used only for the embeddings. Leave `TYPESAFE_API_KEY` empty to call Jev through OpenRouter.
 
 On Windows (PowerShell):
 
 ```powershell
 git clone https://github.com/krysmalskipl/internal-linking; cd internal-linking
 py -m venv .venv; .venv\Scripts\Activate.ps1; pip install -e .
-copy .env.example .env   # put your OpenRouter API key in .env
+copy .env.example .env   # put your API keys in .env
 ```
 
 Open a report with `open data/example.com/report.html` (macOS) or `start data\example.com\report.html` (Windows).
@@ -86,7 +99,7 @@ kitchen renovation,,partial
 
 ## Embeddings and the link graph
 
-Every page also gets one embedding - from its title, H1, description and the start of its content - with [`qwen/qwen3-embedding-8b`](https://openrouter.ai/qwen/qwen3-embedding-8b) through OpenRouter: 768 dimensions, the same API key, cached in `embeddings.jsonl`, at most about $0.02 per 1,000 pages. They give:
+Every page also gets one embedding - from its title, H1, description and the start of its content - with [`qwen/qwen3-embedding-8b`](https://openrouter.ai/qwen/qwen3-embedding-8b) through OpenRouter: 768 dimensions, `OPENROUTER_API_KEY`, cached in `embeddings.jsonl`, at most about $0.02 per 1,000 pages. They give:
 
 - **similarity** of the source and the target page on every link - a CSV column, a slider in the report and an optional `similarity_min` threshold in `config.json` (off by default),
 - the **Graph** view - the whole site on a topic map with the links today and the new links; click a page and its linked pages gather around it on similarity rings while the rest of the site moves aside, with a side panel and the closest pages that are not linked yet,
@@ -130,7 +143,7 @@ src/internal_linking/
 ├── report.py         # interactive report.html with the Graph view, `report` command
 ├── vendor/           # force-graph (MIT), inlined into the report
 ├── config.py         # thresholds (config.json)
-├── jev/client.py     # OpenRouter API: Jev decisions, POST with retries
+├── jev/client.py     # API client: Jev on TypeSafe or OpenRouter, POST with retries
 ├── jev/pairs.py      # questions per pair, answer → columns, hard rules
 └── quality/          # sample, label, evaluate
 tests/                # pytest, no network: pip install -e ".[dev]" && pytest
@@ -138,20 +151,8 @@ tests/                # pytest, no network: pip install -e ".[dev]" && pytest
 
 ## Notes
 
-- The API client is `jev/client.py` (model `typesafe/jev-1.13`; `JEV_MODEL` / `JEV_API_URL` override the defaults). Jev is served from OpenRouter's alpha decisions endpoint, which may change.
+- The API client is `jev/client.py`: Jev `jev-1.13.0` on TypeSafe's `/v1/systemone` when `TYPESAFE_API_KEY` is set (`TYPESAFE_MODEL` / `TYPESAFE_API_URL` override it), otherwise `typesafe/jev-1.13` on OpenRouter's alpha decisions endpoint, which may change (`JEV_MODEL` / `JEV_API_URL`). TypeSafe's own API may not report a cost per call - the report then says "billed by TypeSafe".
 - The crawler identifies itself as `internal-linking`, respects robots.txt and waits 0.5 s between requests by default (`--delay`). Only run it on sites you own or have permission to analyse.
-
-## Changelog
-
-### 0.2.0 - 2026-10-10
-- Page embeddings with `qwen/qwen3-embedding-8b` through OpenRouter (768 dimensions, cached) and a `similarity` score on every link, with an optional `similarity_min` threshold.
-- Graph view in the report: topic map, links today and new links, click-to-focus with similarity rings, closest unlinked pages, similarity histograms. Works offline (force-graph, MIT, inlined).
-- New `embed` command and `run --no-embeddings`; `--dry-run` also counts the pages to embed.
-- Pages view: links out today and a shortcut to the graph.
-- **Breaking:** `recommendations.csv` and `links.csv` have a new `similarity` column after `score`.
-
-### 0.1.0 - 2026-09-29
-- First public version: sitemap crawl, exact / partial phrase matching (Polish, English), one Jev call per pair, keyword mode, page filters, interactive report, quality tools.
 
 ## License
 
