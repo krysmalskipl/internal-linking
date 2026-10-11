@@ -5,6 +5,7 @@ OPENROUTER_API_KEY; embeddings always use OpenRouter. Raises exceptions instead 
 retries on 429 / 5xx. Keys come from the environment or a .env file in the working directory.
 """
 import os
+import re
 import time
 from pathlib import Path
 
@@ -50,6 +51,16 @@ def api_key() -> str:
 
 def jev_provider() -> str:
     return "TypeSafe" if env("TYPESAFE_API_KEY") else "OpenRouter"
+
+
+def jev_version() -> str:
+    """The Jev version the calls go to, named the same for both providers (typesafe/jev-1.13 on
+    OpenRouter and jev-1.13.0 on TypeSafe are both jev-1.13). Part of the answer cache key."""
+    if env("TYPESAFE_API_KEY"):
+        model = env("TYPESAFE_MODEL") or TYPESAFE_MODEL_DEFAULT
+    else:
+        model = env("JEV_MODEL") or MODEL_DEFAULT
+    return re.sub(r"(\.0)+$", "", model.removeprefix("typesafe/"))
 
 
 def jev_endpoint() -> tuple[str, str, str]:

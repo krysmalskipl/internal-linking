@@ -18,11 +18,12 @@ from urllib.parse import urlsplit
 from . import embeddings
 from . import keywords as kw
 from .anchors import NO_LINK_BLOCKS, AnchorFinder, content_words, detect_lang, text_keys, word_key
-from .common import Progress, append_jsonl, clean_title, data_dir, norm_url, read_jsonl, site_suffixes, write_csv
+from .common import (Progress, append_jsonl, clean_title, data_dir, is_archive, norm_url, read_jsonl, site_suffixes,
+                     write_csv)
 from .config import load_config
-from .crawl import BOILERPLATE_SHARE, crawl, strip_boilerplate
+from .crawl import BOILERPLATE_SHARE, crawl, strip_boilerplate, strip_excerpts
 from .jev import pairs
-from .jev.client import JevError, jev_endpoint, jev_provider
+from .jev.client import JevError, jev_endpoint, jev_provider, jev_version
 from .report import write_report
 
 COST_PER_PAIR = 0.00007    # estimate for --dry-run (about 600 input tokens per pair)
@@ -79,6 +80,7 @@ def prepare(pages: list[dict], cfg: dict, sources_re: str | None = None, targets
     sources_re / targets_re: optional regexes on the URL path limiting which pages get links and
     which pages links point to (e.g. only categories as targets in a large shop)."""
     strip_boilerplate(pages)  # idempotent; also cleans pages.jsonl saved by an older version
+    strip_excerpts(pages, cfg["min_words"])  # post previews on listings belong to the posts
     for p in pages:
         p["lang"] = detect_lang(p)
     skipped_lang = sum(not p["lang"] for p in pages)
@@ -89,9 +91,10 @@ def prepare(pages: list[dict], cfg: dict, sources_re: str | None = None, targets
     # candidate pre-filter: key of every target keyword → targets, and keys of every source's text
     # (headings excluded); the exact phrase search then runs only where enough target words occur
     vocab = [finder.profile(titles[j], p["h1"], p["url"], p["lang"])[0] for j, p in enumerate(pages)]
+    archives = {j for j, p in enumerate(pages) if is_archive(p["url"], cfg)}
     index: dict[str, list[int]] = {}
     for j, words_j in enumerate(vocab):
-        if url_matches(pages[j]["url"], targets_re, targets_list):
+        if j not in archives and url_matches(pages[j]["url"], targets_re, targets_list):
             for w in words_j:
                 index.setdefault(word_key(w), []).append(j)
     return {
@@ -99,8 +102,12 @@ def prepare(pages: list[dict], cfg: dict, sources_re: str | None = None, targets
         "titles": titles,
         "sitewide": sitewide_links(pages),
         "finder": finder,
+        # listings (tag, category, blog index) show other pages' excerpts - never link sources
         "sources": [i for i, p in enumerate(pages)
-                    if len(p["text"].split()) >= cfg["min_words"] and url_matches(p["url"], sources_re, sources_list)],
+                    if len(p["text"].split()) >= cfg["min_words"] and not p.get("listing") and i not in archives
+                    and url_matches(p["url"], sources_re, sources_list)],
+        "archives": archives,
+        "listings": sum(bool(p.get("listing")) for p in pages),
         "vocab": vocab,
         "index": index,
         "source_keys": [text_keys(" ".join(b["text"] for b in p.get("blocks", []) if b["tag"] not in NO_LINK_BLOCKS),
@@ -172,6 +179,8 @@ def find_candidates(pages: list[dict], cfg: dict, sources_re: str | None = None,
     reserved = 0
     all_targets = {**site, "index": {}}
     for j, words_j in enumerate(site["vocab"]):
+        if j in site["archives"]:
+            continue  # an archive's name (a tag) reserves nothing
         for w in words_j:
             all_targets["index"].setdefault(word_key(w), []).append(j)
     for (i, j), (phrase, kind, _) in list(anchors.items()):
@@ -184,6 +193,7 @@ def find_candidates(pages: list[dict], cfg: dict, sources_re: str | None = None,
             reserved += 1
 
     info = {"languages": dict(Counter(p["lang"] for p in pages)), "sources": len(sources),
+            "listing pages (not sources)": site["listings"], "archives (not targets)": len(site["archives"]),
             "template phrases": template, "reserved phrases": reserved}
     if site["skipped_lang"]:
         info["pages in unsupported languages"] = site["skipped_lang"]
@@ -195,7 +205,7 @@ def keyword_candidates(pages: list[dict], cfg: dict, keywords: list[dict], sourc
     """Keyword mode: only the given phrases, each linked to its (given or auto-picked) target."""
     site = prepare(pages, cfg, sources_re, sources_list=sources_list)
     pages, titles, finder, sources = site["pages"], site["titles"], site["finder"], site["sources"]
-    resolved, warnings = kw.resolve(keywords, pages, titles)
+    resolved, warnings = kw.resolve(keywords, pages, titles, skip=site["archives"])
     for w in warnings:
         print(f"  ! {w}")
 
@@ -242,7 +252,8 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
     """Judges every pair with its own Jev call, cached in jev_pairs.jsonl."""
     cache_path = ddir / "jev_pairs.jsonl"
     cache = {r["key"]: r["response"] for r in read_jsonl(cache_path)}
-    keys = [pairs.cache_key(r["_state"], r["lang"]) for r in rows]
+    version = jev_version()
+    keys = [pairs.cache_key(r["_state"], r["lang"], version) for r in rows]
     todo = {k: (r["_state"], r["lang"]) for k, r in zip(keys, rows) if k not in cache}
     cost, failed = 0.0, 0
     if todo:
@@ -324,7 +335,8 @@ def process(domain: str, args, cfg: dict) -> dict:
           + f", pairs with a phrase: {len(rows)}")
     if args.dry_run:
         cache = {r["key"] for r in read_jsonl(ddir / "jev_pairs.jsonl")}
-        new = sum(pairs.cache_key(r["_state"], r["lang"]) not in cache for r in rows)
+        version = jev_version()
+        new = sum(pairs.cache_key(r["_state"], r["lang"], version) not in cache for r in rows)
         print(f"to judge with Jev: {new} (the rest is cached), estimated cost ${new * COST_PER_PAIR:.3f}")
         if not args.no_embeddings:
             print(f"pages to embed: {embeddings.count_new(pages, ddir)} (the rest is cached)")

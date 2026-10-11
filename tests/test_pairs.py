@@ -66,3 +66,26 @@ def test_state_carries_section_heading_and_neighbouring_passages():
     assert state["naglowek_sekcji"] == "Zima"
     assert state["poprzedni_fragment"] == "Akapit przed." and state["nastepny_fragment"] == "Punkt po."
     assert state["fragment_z_fraza"] == "Wymiana opon zimowych."
+
+
+def test_cache_key_keeps_jev_1_13_answers_and_separates_other_versions():
+    import hashlib
+    import json
+    src, tgt = page("https://example.pl/a/", "A", "tekst"), page("https://example.pl/b/", "B", "tekst")
+    state = pairs.build_state(src, "A", [{"tag": "p", "text": "tekst", "raw": "tekst"}], 0, tgt, "B", "tekst")
+    before = hashlib.sha1(json.dumps({"state": state, "questions": pairs.questions("pl")}, ensure_ascii=False,
+                                     sort_keys=True).encode()).hexdigest()  # the key used up to 0.2.0
+    assert pairs.cache_key(state, "pl", "jev-1.13") == before == pairs.cache_key(state)
+    assert pairs.cache_key(state, "pl", "jev-1.14") != before
+
+
+def test_jev_version_is_named_the_same_on_both_providers(monkeypatch, tmp_path):
+    from internal_linking.jev import client
+    monkeypatch.chdir(tmp_path)
+    for name in ("TYPESAFE_API_KEY", "TYPESAFE_MODEL", "JEV_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    assert client.jev_version() == "jev-1.13"  # typesafe/jev-1.13 on OpenRouter
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts")
+    assert client.jev_version() == "jev-1.13"  # jev-1.13.0 on TypeSafe
+    monkeypatch.setenv("TYPESAFE_MODEL", "jev-1.14.0")
+    assert client.jev_version() == "jev-1.14"

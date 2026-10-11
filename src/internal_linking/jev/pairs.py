@@ -191,9 +191,16 @@ def questions(lang: str = "pl") -> dict:
     return QUESTIONS_EN if lang == "en" else QUESTIONS
 
 
-def cache_key(state: dict, lang: str = "pl") -> str:
-    body = json.dumps({"state": state, "questions": questions(lang)}, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha1(body.encode()).hexdigest()
+LEGACY_VERSION = "jev-1.13"  # every answer cached before the version joined the key came from it
+
+
+def cache_key(state: dict, lang: str = "pl", version: str = LEGACY_VERSION) -> str:
+    """Answer cache key: the state, the questions and the Jev version - except for jev-1.13, whose
+    key stays as before, so caches from earlier runs stay valid."""
+    body = {"state": state, "questions": questions(lang)}
+    if version != LEGACY_VERSION:
+        body["version"] = version
+    return hashlib.sha1(json.dumps(body, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def judge(state: dict, lang: str = "pl") -> dict:

@@ -134,7 +134,7 @@ def test_graph_and_report_carry_links_similarity_and_the_library(tmp_path):
     data = json.loads(html.split('<script type="application/json" id="data">')[1].split("</script>")[0])
     c_a = float(vectors["https://example.pl/c/"] @ vectors["https://example.pl/a/"])
     assert data["rows"][0]["si"] == pytest.approx(c_a, abs=1e-3)  # filled in from the vectors
-    assert data["pages"]["https://example.pl/b/"] == {"title": "Opony letnie - Serwis", "in": 1, "out": 1}
+    assert data["pages"]["https://example.pl/b/"] == {"title": "Opony letnie - Serwis", "in": 1, "any": 1, "out": 1}
     assert data["embeddings"].endswith("768 dimensions") and len(data["graph"]["nodes"]) == 3
 
 

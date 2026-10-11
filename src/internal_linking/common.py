@@ -39,6 +39,12 @@ def is_internal(url: str, domain: str) -> bool:
     return bare_host(urlsplit(url).netloc) == bare_host(domain)
 
 
+def is_archive(url: str, cfg: dict) -> bool:
+    """Tag, author, date and paged archives (archive_patterns in config.json) - never link targets;
+    categories are not archives."""
+    return any(re.search(pattern, urlsplit(url).path) for pattern in cfg.get("archive_patterns", []))
+
+
 def site_suffixes(pages: list[dict]) -> set[str]:
     """Title endings repeated across many pages (e.g. ' - Site name')."""
     c = Counter()
