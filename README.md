@@ -1,6 +1,6 @@
 # internal-linking
 
-Internal link suggestions for any website, in one command. The tool finds phrases that **already exist** in your content (exact or partial match of another page's name) and asks [Jev](https://openrouter.ai/) - a typed-decision model by TypeSafe, called on TypeSafe's own API or through OpenRouter - to judge every page → phrase → target pair. Every page is also turned into an embedding (Qwen3 Embedding 8B, 768 dimensions, also through OpenRouter), so each link gets a similarity score and the report can draw the whole site as an interactive graph. The output is a CMS-agnostic HTML report and CSV with links ready to insert.
+Internal link suggestions for any website, in one command. The tool finds phrases that **already exist** in your content (exact or partial match of another page's name) and asks [Jev](https://openrouter.ai/typesafe/jev-1.13) - a typed-decision model by TypeSafe, called on TypeSafe's own API or through OpenRouter - to judge every page → phrase → target pair. Every page is also turned into an embedding (Qwen3 Embedding 8B, 768 dimensions, also through OpenRouter), so each link gets a similarity score and the report can draw the whole site as an interactive graph. The output is a CMS-agnostic HTML report and CSV with links ready to insert.
 
 > Works with Polish and English pages. The language is detected per page (`<html lang>`, or the text when the attribute is missing), so bilingual sites get links within each language version. Other languages are skipped.
 
@@ -9,6 +9,14 @@ Internal link suggestions for any website, in one command. The tool finds phrase
 Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.pl.html) - a real run on a 43-page SEO blog: 28 links on 20 pages, 140 suggestions judged, $0.01. Download it and open it in a browser. (Made with 0.1.0 - no Graph view yet.)
 
 ## Changelog
+
+### 0.5.0 - 2026-10-11
+- **Clear errors:** every command ends with `! what went wrong - what to do` and exit code 1 instead of a Python trace: no results yet ("run `internal-linking run` first"), a missing file, a bad `--sources` regex, a broken `config.json`, a domain that does not answer, no sitemap, a sitemap whose pages cannot be used (with the reason: robots.txt, noindex, redirects...). `--debug` shows the trace; anything unexpected asks to be reported.
+- **No money spent on failing calls:** a bad key, no credits or a wrong model (401/402/403/404) stops the run after the first answer instead of sending every pair; Ctrl+C cancels the queued calls (answers already received stay cached); a 429 waits as long as the API asks (`Retry-After`); a malformed answer is not cached.
+- `run` exits with code 1 when a domain fails, so scripts - and the panel - see it; failed commands show as "failed" in the panel.
+- Files that are not web pages (PDF...) in the sitemap are skipped; the crawler's user agent carries the real version.
+- Windows: config and domain files are read as UTF-8, uploads in the panel work.
+- `scipy` is a declared dependency; tests run on Python 3.10-3.13 on Linux, macOS and Windows in CI.
 
 ### 0.4.1 - 2026-10-11
 - **At most 5 new links to one page** (`max_links_per_target` in `config.json`, 0 = no limit; a slider in the report). A page named in many texts - say a Google Search Console guide on an SEO blog - got a link from nearly every post with the same anchor; now it gets the best ones (score, then how closely the passage is about it), and the rest are in *Rejected* as "per-target limit". Keyword mode is not limited.
@@ -51,9 +59,19 @@ The default thresholds were calibrated on Polish service and blog sites; on a ne
 
 ## Install
 
+You need Python 3.10 or newer and an [OpenRouter](https://openrouter.ai) account with a few dollars of credit (a 50-page site costs about a cent).
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install "git+https://github.com/krysmalskipl/internal-linking"
+echo "OPENROUTER_API_KEY=sk-or-..." > .env   # your key, in the folder you run the tool from
+.venv/bin/internal-linking ui                # the panel opens in the browser
+```
+
+To change the code, clone it instead:
+
 ```bash
 git clone https://github.com/krysmalskipl/internal-linking && cd internal-linking
-python3 -m venv .venv && .venv/bin/pip install -e .
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cp .env.example .env   # put your API keys in .env
 ```
 
@@ -62,12 +80,14 @@ Keys in `.env`: `OPENROUTER_API_KEY` covers both Jev and the embeddings. With `T
 On Windows (PowerShell):
 
 ```powershell
-git clone https://github.com/krysmalskipl/internal-linking; cd internal-linking
-py -m venv .venv; .venv\Scripts\Activate.ps1; pip install -e .
-copy .env.example .env   # put your API keys in .env
+py -m venv .venv; .venv\Scripts\pip install "git+https://github.com/krysmalskipl/internal-linking"
+Set-Content .env "OPENROUTER_API_KEY=sk-or-..."
+.venv\Scripts\internal-linking ui
 ```
 
-Open a report with `open data/example.com/report.html` (macOS) or `start data\example.com\report.html` (Windows).
+(`.venv\Scripts\Activate.ps1` may need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once; calling `.venv\Scripts\internal-linking` directly does not.)
+
+Open a report with `open data/example.com/report.html` (macOS), `xdg-open data/example.com/report.html` (Linux) or `start data\example.com\report.html` (Windows) - or from the panel.
 
 ## Usage
 
@@ -76,7 +96,7 @@ internal-linking ui                                      # the panel in the brow
 internal-linking run --domain example.com
 internal-linking run --domain a.com --domain b.com       # several domains
 internal-linking run --domains-file domains.txt          # one domain per line
-internal-linking run --domain example.com --dry-run      # count pairs and estimate cost, no Jev calls
+internal-linking run --domain example.com --dry-run      # count pairs and estimate cost, no Jev calls (pages are still downloaded)
 internal-linking run --domain example.com --no-crawl     # reuse downloaded pages
 internal-linking run --domain example.com --max-links 5  # new links per page (default 3)
 internal-linking run --domain shop.com --targets '/category/|/blog/'   # large shop: link only to categories and posts
@@ -102,6 +122,15 @@ Results land in `data/<domain>/` (change with `--data-dir`):
 - `embeddings.jsonl` - one vector per page (cache)
 
 Jev answers (`jev_pairs.jsonl`) and page embeddings (`embeddings.jsonl`) are cached, so re-runs only pay for new or changed pairs and pages. Rough numbers: a 50-page site takes about a minute and about $0.01; downloading is the slow part on large sites (about 0.5 s per page), the phrase search takes seconds thanks to a word index. `--sources` / `--targets` (regexes on the URL path) and `--sources-file` / `--targets-file` (lists of URLs or paths) choose which pages get links and which pages links may point to - the whole site is still crawled, so e.g. blog posts can link to service pages. On a shop with thousands of products they also keep the number of Jev calls - and the cost - under control; check it first with `--dry-run`.
+
+## Limitations
+
+- **Only phrases already in the text.** A page nobody mentions by name gets no links - write about it, or use keyword mode with your own phrases.
+- **Polish and English.** Pages in other languages are skipped.
+- **A sitemap is required** (from robots.txt, `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`, or `--sitemap`); the crawler does not follow links. Sites are fetched over https.
+- **Content rendered by JavaScript is not seen** - only the HTML the server sends.
+- **No page limit.** A large site takes time to download (about 0.5 s per page); limit the work with `--sources` / `--targets` and check the cost with `--dry-run` first.
+- **Measured, not perfect.** On a hand-labelled run of a 63-page Polish SEO blog (all 268 judged pairs), 19 of the 22 links selected with the default thresholds were ones an editor would insert. Check a sample on your own site (see [Thresholds and quality checks](#thresholds-and-quality-checks-optional)).
 
 ## Insert and verify
 
@@ -197,6 +226,7 @@ tests/                # pytest, no network: pip install -e ".[dev]" && pytest
 
 - The API client is `jev/client.py`: Jev `jev-1.13.0` on TypeSafe's `/v1/systemone` when `TYPESAFE_API_KEY` is set (`TYPESAFE_MODEL` / `TYPESAFE_API_URL` override it), otherwise `typesafe/jev-1.13` on OpenRouter's alpha decisions endpoint, which may change (`JEV_MODEL` / `JEV_API_URL`). TypeSafe's own API may not report a cost per call - the report then says "billed by TypeSafe". Keep a pinned version rather than `jev-latest`: answers are cached per version and the thresholds were set on 1.13, while the alias moves without changing its name.
 - The crawler identifies itself as `internal-linking`, respects robots.txt and waits 0.5 s between requests by default (`--delay`). Only run it on sites you own or have permission to analyse.
+- **When something goes wrong** the command prints `! what happened - what to do` and exits with code 1 (130 after Ctrl+C). Run it again with `--debug` for the full trace, and report anything unexpected at [GitHub issues](https://github.com/krysmalskipl/internal-linking/issues).
 
 ## License
 

@@ -113,7 +113,7 @@ def test_sources_can_be_limited_by_regex_or_url_list(site, tmp_path):
     assert {r["source_url"] for r in only_home} == {"https://example.pl/"}
     assert {r["target_url"] for r in only_home} >= {"https://example.pl/klimatyzacja/"}   # targets stay open
     f = tmp_path / "urls.txt"
-    f.write_text("# blog only\n/geometria/\nhttps://www.example.pl/\n")
+    f.write_text("# blog only\n/geometria/\nhttps://www.example.pl/\n", encoding="utf-8")
     allowed = load_url_list(str(f), "example.pl")
     assert allowed == {"example.pl/geometria/", "example.pl/"}
     rows, _ = find_candidates(site, load_config(), sources_list=allowed)

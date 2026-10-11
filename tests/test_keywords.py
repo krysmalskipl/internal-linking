@@ -8,12 +8,12 @@ from conftest import page
 def test_load_csv_and_plain_text(tmp_path):
     csv_file = tmp_path / "k.csv"
     csv_file.write_text("keyword,target_url,match\nwymiana opon zimowych,https://example.pl/wymiana-opon/,exact\n"
-                        "geometria kół,,\n")
+                        "geometria kół,,\n", encoding="utf-8")
     assert load_keywords(csv_file) == [
         {"keyword": "wymiana opon zimowych", "target_url": "https://example.pl/wymiana-opon/", "match": "exact"},
         {"keyword": "geometria kół", "target_url": "", "match": "partial"}]
     txt = tmp_path / "k.txt"
-    txt.write_text("serwis klimatyzacji\n# komentarz\n\n")
+    txt.write_text("serwis klimatyzacji\n# komentarz\n\n", encoding="utf-8")
     assert load_keywords(txt) == [{"keyword": "serwis klimatyzacji", "target_url": "", "match": "partial"}]
 
 

@@ -17,10 +17,12 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
+from . import __version__
 from .common import data_dir, is_internal, norm_url, write_jsonl
+from .jev.client import short_error
 
 ROBOTS_AGENT = "internal-linking"
-UA = f"Mozilla/5.0 (compatible; {ROBOTS_AGENT}/0.1; +https://github.com/krysmalskipl/internal-linking)"
+UA = f"Mozilla/5.0 (compatible; {ROBOTS_AGENT}/{__version__}; +https://github.com/krysmalskipl/internal-linking)"
 NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
 LINK_MARK = "¶"  # boundary in block text: an existing link, code, or the end of a block
 BLOCKS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "td", "th", "dt", "dd", "blockquote", "figcaption"]
@@ -42,7 +44,7 @@ def fetch(url: str) -> requests.Response | None:
     try:
         r = session.get(url, timeout=30)
     except requests.RequestException as e:
-        print(f"  ! {url}: {e}")
+        print(f"  ! {url}: {short_error(e)}")
         return None
     # without a charset in the header requests assumes Latin-1 for HTML, which garbles Polish
     # letters: the page's own <meta charset> decides, else UTF-8
@@ -50,6 +52,16 @@ def fetch(url: str) -> requests.Response | None:
         m = META_CHARSET.search(r.content[:4096])
         r.encoding = m.group(1).decode() if m else "utf-8"
     return r
+
+
+def reachable(base: str) -> None:
+    """Fails with a plain reason when the site cannot be reached at all - before the crawl tries
+    robots.txt and every sitemap location and prints an error for each."""
+    try:
+        session.get(base, timeout=30)
+    except requests.RequestException as e:
+        raise RuntimeError(f"cannot reach {base}: {short_error(e)} - check the domain "
+                           "(the tool fetches sites over https)") from None
 
 
 def load_robots(base: str) -> tuple[robotparser.RobotFileParser, list[str]]:
@@ -313,12 +325,15 @@ def strip_excerpts(pages: list[dict], min_words: int = 150) -> int:
 def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[dict]:
     """Downloads the sitemap pages and writes data/<domain>/pages.jsonl."""
     base = f"https://{domain.removeprefix('https://').removeprefix('http://').strip('/')}"
+    reachable(base)
     robots, declared = load_robots(base)
     delay = max(delay, float(robots.crawl_delay(ROBOTS_AGENT) or 0))
     sitemap = sitemap or find_sitemap(base, declared)
     print(f"sitemap: {sitemap}")
     urls = list(dict.fromkeys(sitemap_urls(sitemap)))
     print(f"URLs in sitemap: {len(urls)}")
+    if not urls:
+        raise RuntimeError(f"the sitemap {sitemap} lists no pages - give another one with --sitemap")
 
     print(f"downloading {len(urls)} pages (about {len(urls) * (delay + 0.3) / 60:.0f} min)...")
     pages, skipped = [], {}
@@ -330,6 +345,10 @@ def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[d
         time.sleep(delay)
         if r is None or r.status_code != 200:
             skipped[url] = f"status {getattr(r, 'status_code', 'error')}"
+            continue
+        kind = r.headers.get("content-type", "").split(";")[0].strip().lower()
+        if kind and "html" not in kind:
+            skipped[url] = f"not a web page ({kind})"
             continue
         if norm_url(r.url) != norm_url(url):
             skipped[url] = f"redirects to {r.url}"
@@ -345,6 +364,10 @@ def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[d
                   f"{len(page['content_links'])} in content, {len(page['breadcrumb_links'])} in breadcrumbs, "
                   f"{len(page['other_links'])} elsewhere)")
 
+    if not pages:
+        reasons = Counter(re.sub(r" → .*| https?://\S+", "", why) for why in skipped.values())
+        raise RuntimeError(f"none of the {len(urls)} pages in the sitemap could be used: "
+                           + ", ".join(f"{why} ({n})" for why, n in reasons.most_common(4)))
     removed = strip_boilerplate(pages)
     if removed:
         print(f"\ntemplate blocks removed from content (repeated across pages): {removed}")

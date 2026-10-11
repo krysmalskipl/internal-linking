@@ -16,11 +16,26 @@ MODEL_DEFAULT = "typesafe/jev-1.13"
 TYPESAFE_URL_DEFAULT = "https://api.typesafe.ai/v1/systemone"
 TYPESAFE_MODEL_DEFAULT = "jev-1.13.0"  # the same Jev version as typesafe/jev-1.13 on OpenRouter
 RETRY_STATUSES = {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}  # 52x: Cloudflare edge errors
-HINTS = {401: "missing or invalid key", 402: "no credits left on the account", 429: "rate limited"}
+HINTS = {401: "missing or invalid key", 402: "no credits left on the account", 403: "the key may not use this model",
+         404: "model or endpoint not found - check JEV_MODEL / EMBEDDING_MODEL and the API URL in .env",
+         429: "rate limited"}
+FATAL_STATUSES = {401, 402, 403, 404}  # every further call would fail the same way
+MAX_WAIT = 60                         # longest Retry-After honoured, in seconds
 
 
 class JevError(RuntimeError):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+    @property
+    def fatal(self) -> bool:
+        """A key, credit or model problem: stop instead of paying for calls that will all fail."""
+        return self.status in FATAL_STATUSES
+
+
+class FatalApiError(JevError):
+    """A key, credit or model problem: ends the whole run, not just the domain being processed."""
 
 
 def load_dotenv(path: Path | None = None) -> None:
@@ -83,14 +98,46 @@ def post(url: str, body: dict, key: str | None = None, retries: int = 4, timeout
             r = requests.post(url, json=body, headers=headers, timeout=timeout)
         except requests.RequestException as e:
             if attempt == retries:
-                raise JevError(f"Cannot reach the API: {e}") from e
+                raise JevError(f"Cannot reach the API ({url}): {short_error(e)}") from e
+            wait = 2 ** attempt
         else:
             if r.ok:
-                return r.json()
+                try:
+                    return r.json()
+                except ValueError:
+                    raise JevError(f"The API answered with something other than JSON: {r.text[:200]}") from None
             if r.status_code not in RETRY_STATUSES or attempt == retries:
-                raise JevError(f"API error {r.status_code} {HINTS.get(r.status_code, '')}\n{r.text[:500]}")
-        time.sleep(2 ** attempt)
+                raise JevError(f"API error {r.status_code} ({HINTS.get(r.status_code, 'see the details')})\n{r.text[:500]}",
+                               r.status_code)
+            wait = retry_after(r) or 2 ** attempt
+        time.sleep(wait)
     raise JevError("unreachable")
+
+
+def retry_after(r: requests.Response) -> float | None:
+    """Seconds the API asks to wait before the next call (Retry-After on 429 / 503), at most MAX_WAIT."""
+    try:
+        return min(max(float(r.headers.get("Retry-After", "")), 0), MAX_WAIT)
+    except ValueError:
+        return None
+
+
+def short_error(e: Exception) -> str:
+    """A network error in a few words instead of urllib3's nested message."""
+    text = str(e)
+    for needle, plain in (("NameResolution", "the domain does not resolve (DNS)"),
+                          ("Failed to resolve", "the domain does not resolve (DNS)"),
+                          ("getaddrinfo", "the domain does not resolve (DNS)"),
+                          ("CERTIFICATE_VERIFY_FAILED", "invalid TLS certificate"),
+                          ("Connection refused", "connection refused"),
+                          ("timed out", "timed out"), ("Read timed out", "timed out")):
+        if needle in text:
+            return plain
+    if isinstance(e, requests.exceptions.SSLError):
+        return "TLS/SSL error"
+    if isinstance(e, requests.exceptions.ConnectionError):
+        return "no connection"
+    return type(e).__name__
 
 
 def decide(state: dict, questions: dict, retries: int = 4, timeout: int = 60) -> dict:

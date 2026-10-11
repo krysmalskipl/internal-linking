@@ -1,4 +1,19 @@
 import pytest
+import requests
+from urllib.parse import urlsplit
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Tests never reach the internet (a forgotten stub would call a real site or a paid API);
+    local servers that tests start themselves are allowed."""
+    send = requests.Session.send
+
+    def local_only(self, request, **kw):
+        if urlsplit(request.url).hostname not in ("127.0.0.1", "localhost"):
+            raise requests.ConnectionError(f"network disabled in tests: {request.url}")
+        return send(self, request, **kw)
+    monkeypatch.setattr(requests.Session, "send", local_only)
 
 
 def page(url: str, title: str, text: str, h1: str = "", blocks: list[dict] | None = None, lang: str = "pl",

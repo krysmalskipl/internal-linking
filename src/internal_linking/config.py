@@ -14,15 +14,23 @@ def config_path(explicit: str | None = None) -> Path:
 
 
 def load_config(explicit: str | None = None) -> dict:
-    cfg = json.loads(DEFAULT_PATH.read_text())
+    cfg = json.loads(DEFAULT_PATH.read_text(encoding="utf-8"))
     path = config_path(explicit)
+    if explicit and not path.exists():
+        print(f"  ! {path} does not exist yet - using the default thresholds")
     if path != DEFAULT_PATH and path.exists():
-        cfg.update(json.loads(path.read_text()))
+        try:
+            own = json.loads(path.read_text(encoding="utf-8-sig"))
+        except ValueError as e:
+            raise RuntimeError(f"{path} is not valid JSON ({e}) - fix it or delete it to use the defaults") from None
+        if not isinstance(own, dict):
+            raise RuntimeError(f"{path} must hold an object like {{\"score_min\": 0.9}}")
+        cfg.update(own)
     return cfg
 
 
 def save_config(cfg: dict, explicit: str | None = None) -> Path:
     """Writes to --config or ./config.json - never over the packaged defaults."""
     path = Path(explicit) if explicit else Path.cwd() / "config.json"
-    path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
+    path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path

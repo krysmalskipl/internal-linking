@@ -212,5 +212,5 @@ def test_report_script_is_valid_javascript(tmp_path):
     write_report(out, "example.pl", [], load_config(), 3, pages=[page("https://example.pl/", "Start", "t")])
     scripts = re.findall(r"<script>(.*?)</script>", out.read_text(encoding="utf-8"), re.S)
     (tmp_path / "report.js").write_text(scripts[-1], encoding="utf-8")  # the report's own code (not the library)
-    check = subprocess.run(["node", "--check", str(tmp_path / "report.js")], capture_output=True, text=True)
+    check = subprocess.run(["node", "--check", str(tmp_path / "report.js")], capture_output=True, text=True, encoding="utf-8")
     assert check.returncode == 0, check.stderr

@@ -13,19 +13,19 @@ import re
 import shutil
 import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import agent, embeddings, verify
 from . import keywords as kw
 from .anchors import NO_LINK_BLOCKS, AnchorFinder, content_words, detect_lang, text_keys, word_key
-from .common import (Progress, append_jsonl, clean_title, data_dir, is_archive, norm_url, now, read_jsonl, shown,
-                     site_suffixes, write_csv)
+from .common import (Progress, append_jsonl, clean_title, data_dir, is_archive, norm_url, now, parallel, read_jsonl,
+                     shown, site_suffixes, write_csv)
 from .config import load_config
 from .crawl import BOILERPLATE_SHARE, crawl, strip_boilerplate, strip_excerpts
 from .jev import pairs
-from .jev.client import JevError, jev_endpoint, jev_provider, jev_version
+from .jev.client import FatalApiError, JevError, jev_endpoint, jev_provider, jev_version
 from .report import write_report
 
 COST_PER_PAIR = 0.00007    # estimate for --dry-run (about 600 input tokens per pair)
@@ -53,6 +53,14 @@ def already_linked(src: dict, sitewide: dict[str, set[str]]) -> set[str]:
     is worth more."""
     local = set(src.get("other_links", [])) - sitewide.get(src.get("lang", ""), set())
     return set(src["content_links"]) | set(src.get("breadcrumb_links", [])) | local
+
+
+def check_regex(name: str, pattern: str | None) -> None:
+    if pattern:
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            raise RuntimeError(f"{name}: not a valid regular expression ({e}): {pattern}") from None
 
 
 def url_matches(url: str, pattern: str | None, allowed: set[str] | None = None) -> bool:
@@ -256,20 +264,26 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
     cache = {r["key"]: r["response"] for r in read_jsonl(cache_path)}
     version = jev_version()
     keys = [pairs.cache_key(r["_state"], r["lang"], version) for r in rows]
-    todo = {k: (r["_state"], r["lang"]) for k, r in zip(keys, rows) if k not in cache}
+    # a malformed answer cached by an older version is asked again
+    todo = {k: (r["_state"], r["lang"]) for k, r in zip(keys, rows)
+            if k not in cache or not pairs.well_formed(cache[k], r["lang"])}
     cost, failed = 0.0, 0
     if todo:
         jev_endpoint()  # fail fast with a clear message when no key is set
         print(f"judging {len(todo)} pairs with Jev via {jev_provider()} ({len(rows) - len(todo)} cached)...")
     progress = Progress("judged", len(todo), "pairs")
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {k: ex.submit(pairs.judge, st, lang) for k, (st, lang) in todo.items()}
-        for n, (k, fut) in enumerate(futures.items(), 1):
-            try:
-                resp = fut.result()
-            except JevError as e:
+    with closing(parallel(lambda k: pairs.judge(*todo[k]), list(todo), workers)) as answers:
+        for k, resp, err in answers:
+            if err is None and not pairs.well_formed(resp, todo[k][1]):
+                err = JevError(f"unexpected answer format: {json.dumps(resp)[:200]}")
+            if isinstance(err, JevError) and err.fatal:
+                raise FatalApiError(f"Jev: {err}\nstopped before sending the remaining pairs; "
+                                    f"{progress.done} answers are cached and will not be paid for again")
+            if err is not None:
+                if not isinstance(err, JevError):
+                    raise err
                 failed += 1
-                print(f"  ! Jev: {str(e)[:200]}")
+                print(f"  ! Jev: {str(err)[:200]}")
                 continue
             append_jsonl(cache_path, {"key": k, "response": resp})
             cache[k] = resp
@@ -278,7 +292,7 @@ def judge(rows: list[dict], ddir: Path, workers: int) -> float:
     if todo and failed > 0.2 * len(todo):
         raise RuntimeError(f"Jev failed on {failed} of {len(todo)} pairs - stopping this domain")
     for r, k in zip(rows, keys):
-        if k in cache:
+        if k in cache and pairs.well_formed(cache[k], r["lang"]):  # a bad answer asked again without luck stays unjudged
             r.update(pairs.summarize(cache[k], r["lang"]))
     print(f"Jev: {len(todo) - failed} new pairs, {len(rows) - len(todo)} cached, cost {jev_cost(cost, 4)}")
     return cost
@@ -359,8 +373,14 @@ def process(domain: str, args, cfg: dict) -> dict:
         try:
             vectors, emb_cost = embeddings.embed_pages(pages, ddir, min(args.workers, 4))
         except JevError as e:
-            print(f"  ! embeddings: {str(e)[:300]}\n    continuing without similarity and the topic map - check "
-                  f"EMBEDDING_MODEL in .env, then run `internal-linking embed --domain {domain}`")
+            if e.status in (401, 402, 403):
+                hint = "check OPENROUTER_API_KEY and the credits on openrouter.ai"
+            elif e.status == 404:
+                hint = "check EMBEDDING_MODEL in .env"
+            else:
+                hint = "the API may be down for a moment"
+            print(f"  ! embeddings: {str(e)[:300]}\n    continuing without similarity and the topic map - {hint}, "
+                  f"then run `internal-linking embed --domain {domain}`")
     embeddings.add_similarity(rows, vectors)
     cost = judge(rows, ddir, args.workers) if rows else 0.0
     select(rows, cfg, args.max_links or cfg["max_links_per_page"])
@@ -384,7 +404,7 @@ def process(domain: str, args, cfg: dict) -> dict:
         stats["Embeddings cost"] = f"${emb_cost:.3f}"
     # when the run was made and what it cost - `report`, `embed` and `verify` rebuild the report with it
     (ddir / "run.json").write_text(json.dumps({"run_at": run_at, "version": agent.__version__, "stats": stats,
-                                               "pages": len(pages), "links": len(accepted)}, indent=2) + "\n")
+                                               "pages": len(pages), "links": len(accepted)}, indent=2) + "\n", encoding="utf-8")
     write_report(ddir / "report.html", domain, rows, cfg, max_links, stats, pages=pages, vectors=vectors)
     print(f"links to insert: {len(accepted)} on {pages_with} pages "
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")
@@ -420,18 +440,22 @@ def verify_previous(ddir: Path, pages: list[dict]) -> None:
 def run(args) -> None:
     domains = list(args.domain)
     if args.domains_file:
-        domains += [ln.strip() for ln in Path(args.domains_file).read_text().splitlines()
+        domains += [ln.strip() for ln in Path(args.domains_file).read_text(encoding="utf-8-sig").splitlines()
                     if ln.strip() and not ln.startswith("#")]
     if not domains:
         raise SystemExit("give --domain or --domains-file")
     if args.sitemap and len(domains) > 1:
         raise SystemExit("--sitemap works with a single domain only")
+    for name in ("sources", "targets"):
+        check_regex(f"--{name}", getattr(args, name))
 
     cfg = load_config(args.config)
     summary = []
     for d in dict.fromkeys(domains):
         try:
             summary.append(process(d, args, cfg))
+        except FatalApiError:
+            raise  # a key or credit problem: the next domains would fail the same way
         except RuntimeError as e:
             print(f"! {d}: {e}")
             summary.append({"domain": d, "error": str(e)[:120]})
@@ -439,6 +463,8 @@ def run(args) -> None:
         print("\n=== summary")
         for s in summary:
             print("  " + ", ".join(f"{k}: {v}" for k, v in s.items()))
+    if any("error" in s for s in summary):
+        raise SystemExit(1)  # a failed domain fails the command - scripts and the panel see it
 
 
 def add_parser(sub) -> None:

@@ -135,7 +135,7 @@ def write_keys(new: dict) -> None:
 
 
 def settings(config: str | None) -> dict:
-    return {"keys": key_status(), "config": load_config(config), "defaults": json.loads(DEFAULT_PATH.read_text()),
+    return {"keys": key_status(), "config": load_config(config), "defaults": json.loads(DEFAULT_PATH.read_text(encoding="utf-8")),
             "config_path": str(saved_to(config)), "env_path": str(env_file()), "data_dir": str(data_root().resolve()),
             "version": __version__}
 
@@ -147,7 +147,7 @@ def saved_to(config: str | None) -> Path:
 
 def write_config(values: dict, config: str | None) -> None:
     """Checks the values and saves only what differs from the built-in defaults."""
-    defaults, cfg = json.loads(DEFAULT_PATH.read_text()), load_config(config)
+    defaults, cfg = json.loads(DEFAULT_PATH.read_text(encoding="utf-8")), load_config(config)
     for name, value in values.items():
         if name not in CONFIG_FIELDS:
             raise Problem(f"unknown setting: {name}")
@@ -175,12 +175,12 @@ def write_config(values: dict, config: str | None) -> None:
 
 def file_info(path: Path, base: Path) -> dict:
     st = path.stat()
-    return {"name": str(path.relative_to(base)), "size": st.st_size,
+    return {"name": path.relative_to(base).as_posix(), "size": st.st_size,
             "modified": datetime.fromtimestamp(st.st_mtime).astimezone().isoformat(timespec="minutes")}
 
 
 def project(d: Path, jobs: "Jobs") -> dict:
-    run = json.loads((d / "run.json").read_text()) if (d / "run.json").exists() else {}
+    run = json.loads((d / "run.json").read_text(encoding="utf-8")) if (d / "run.json").exists() else {}
     checked = verify.load(d)
     logs = sorted((d / "logs").glob("*.log"), reverse=True) if (d / "logs").is_dir() else []
     return {"domain": d.name, "run_at": run.get("run_at", ""), "links": run.get("links"), "pages": run.get("pages"),
@@ -273,7 +273,7 @@ class Job:
 
     def state(self, since: int = 0) -> dict:
         return {"id": self.id, "domain": self.domain, "command": self.command, "status": self.status, "code": self.code,
-                "started": self.started, "ended": self.ended, "log": str(self.log.relative_to(self.log.parents[1])),
+                "started": self.started, "ended": self.ended, "log": self.log.relative_to(self.log.parents[1]).as_posix(),
                 "lines": self.lines[since:], "next": len(self.lines)}
 
 
@@ -330,7 +330,16 @@ def make_handler(port: int, token: str, jobs: Jobs, config: str | None):
             self.send(status, json.dumps(data, ensure_ascii=False).encode(), "application/json")
 
         def handle_safely(self, method: str) -> None:
+            self.request_body = b""
             try:
+                if method == "POST":
+                    n = int(self.headers.get("Content-Length") or 0)
+                    if n > UPLOAD_MAX:
+                        self.close_connection = True
+                        raise Problem("file too large (max 20 MB)", 413)
+                    # read before answering: on Windows, closing a connection with the request body
+                    # still unread resets it, and the browser never gets the answer
+                    self.request_body = self.rfile.read(n)
                 if self.headers.get("Host") not in hosts:
                     raise Problem("wrong host", 403)
                 url = urlsplit(self.path)
@@ -349,10 +358,7 @@ def make_handler(port: int, token: str, jobs: Jobs, config: str | None):
             self.handle_safely("POST")
 
         def body(self) -> bytes:
-            n = int(self.headers.get("Content-Length") or 0)
-            if n > UPLOAD_MAX:
-                raise Problem("file too large (max 20 MB)", 413)
-            return self.rfile.read(n)
+            return self.request_body
 
         def route(self, method: str, path: str, query: dict) -> None:
             parts = [p for p in path.split("/") if p]

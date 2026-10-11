@@ -236,6 +236,15 @@ def summarize(resp: dict, lang: str = "pl") -> dict:
     }
 
 
+def well_formed(resp: dict, lang: str = "pl") -> bool:
+    """The answer has every field summarize() reads - an error page or a changed API format does not."""
+    try:
+        summarize(resp, lang)
+        return True
+    except (KeyError, TypeError, AttributeError, ValueError):
+        return False
+
+
 def reject_reason(row: dict, cfg: dict) -> str:
     """Hard rules on Jev answers (thresholds from config.json); empty string = the pair passes."""
     if row["jev_cannibalisation"] >= cfg["cannibalisation_max"]:

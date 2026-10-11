@@ -40,7 +40,7 @@ def test_jev_falls_back_to_openrouter_when_the_typesafe_key_is_empty(sent, monke
 
 
 def test_keys_are_read_from_dotenv(sent, tmp_path):
-    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-or\nTYPESAFE_API_KEY=\n")
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-or\nTYPESAFE_API_KEY=\n", encoding="utf-8")
     client.decide({"a": 1}, {})
     assert sent[0][2] == "Bearer sk-or"
 
