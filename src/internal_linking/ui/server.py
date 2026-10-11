@@ -330,7 +330,16 @@ def make_handler(port: int, token: str, jobs: Jobs, config: str | None):
             self.send(status, json.dumps(data, ensure_ascii=False).encode(), "application/json")
 
         def handle_safely(self, method: str) -> None:
+            self.request_body = b""
             try:
+                if method == "POST":
+                    n = int(self.headers.get("Content-Length") or 0)
+                    if n > UPLOAD_MAX:
+                        self.close_connection = True
+                        raise Problem("file too large (max 20 MB)", 413)
+                    # read before answering: on Windows, closing a connection with the request body
+                    # still unread resets it, and the browser never gets the answer
+                    self.request_body = self.rfile.read(n)
                 if self.headers.get("Host") not in hosts:
                     raise Problem("wrong host", 403)
                 url = urlsplit(self.path)
@@ -349,10 +358,7 @@ def make_handler(port: int, token: str, jobs: Jobs, config: str | None):
             self.handle_safely("POST")
 
         def body(self) -> bytes:
-            n = int(self.headers.get("Content-Length") or 0)
-            if n > UPLOAD_MAX:
-                raise Problem("file too large (max 20 MB)", 413)
-            return self.rfile.read(n)
+            return self.request_body
 
         def route(self, method: str, path: str, query: dict) -> None:
             parts = [p for p in path.split("/") if p]
