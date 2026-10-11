@@ -52,7 +52,7 @@ def test_vectors_are_cut_to_the_dimensions_and_normalised():
 def test_pages_are_embedded_in_batches_of_20_and_cached(tmp_path, api):
     pages = [page(f"https://example.pl/p{i}/", f"Strona {i}", f"tekst o temacie {i}") for i in range(45)]
     vectors, cost = embeddings.embed_pages(pages, tmp_path)
-    assert [len(c["input"]) for c in api] == [20, 20, 5]
+    assert sorted(len(c["input"]) for c in api) == [5, 20, 20]  # batches go out in parallel, in any order
     assert {(c["model"], c["dimensions"]) for c in api} == {("qwen/qwen3-embedding-8b", 768)}
     assert len(vectors) == 45 and cost == pytest.approx(0.003)
     v = vectors["https://example.pl/p7/"]
