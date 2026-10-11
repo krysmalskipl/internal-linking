@@ -91,3 +91,20 @@ def test_block_repeated_on_five_pages_is_template_even_in_a_big_site():
               "other_links": [], "blocks": ([bio] if i < 5 else []) + [
                   {"tag": "p", "text": f"Text {i}", "raw": f"Text {i}", "links": []}]} for i in range(40)]
     assert crawl_mod.strip_boilerplate(pages) == 5   # 5 of 40 pages is only 12%, still a template
+
+
+def test_pages_without_a_charset_header_are_read_by_their_meta_charset(monkeypatch):
+    import requests
+
+    def response(body: bytes, content_type: str):
+        r = requests.Response()
+        r.status_code, r._content, r.headers["content-type"] = 200, body, content_type
+        return r
+
+    utf8 = "<html><head><meta charset='utf-8'></head><body>Sprawdź źródło</body></html>".encode()
+    cp1250 = '<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1250"></head>' \
+             "<body>Sprawdź źródło</body></html>"
+    for body, ctype in [(utf8, "text/html"), (cp1250.encode("cp1250"), "text/html"), (utf8, "text/html; charset=utf-8"),
+                        ("<p>Sprawdź</p>".encode(), "text/html")]:
+        monkeypatch.setattr(crawl_mod.session, "get", lambda url, timeout: response(body, ctype))
+        assert "Sprawdź" in crawl_mod.fetch("https://example.pl/").text

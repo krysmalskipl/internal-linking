@@ -35,12 +35,21 @@ session = requests.Session()
 session.headers["User-Agent"] = UA
 
 
+META_CHARSET = re.compile(rb"""<meta[^>]+charset=["']?\s*([\w-]+)""", re.I)
+
+
 def fetch(url: str) -> requests.Response | None:
     try:
-        return session.get(url, timeout=30)
+        r = session.get(url, timeout=30)
     except requests.RequestException as e:
         print(f"  ! {url}: {e}")
         return None
+    # without a charset in the header requests assumes Latin-1 for HTML, which garbles Polish
+    # letters: the page's own <meta charset> decides, else UTF-8
+    if "charset" not in r.headers.get("content-type", "").lower():
+        m = META_CHARSET.search(r.content[:4096])
+        r.encoding = m.group(1).decode() if m else "utf-8"
+    return r
 
 
 def load_robots(base: str) -> tuple[robotparser.RobotFileParser, list[str]]:

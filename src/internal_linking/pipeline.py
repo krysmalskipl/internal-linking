@@ -9,13 +9,14 @@ Two modes: automatic (targets and phrases come from the pages' titles) and keywo
 (--keywords: only the phrases you list, see keywords.py).
 """
 import re
+import shutil
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import embeddings
+from . import agent, embeddings, verify
 from . import keywords as kw
 from .anchors import NO_LINK_BLOCKS, AnchorFinder, content_words, detect_lang, text_keys, word_key
 from .common import (Progress, append_jsonl, clean_title, data_dir, is_archive, norm_url, read_jsonl, site_suffixes,
@@ -316,6 +317,8 @@ def process(domain: str, args, cfg: dict) -> dict:
     pages = read_jsonl(ddir / "pages.jsonl")
     if not pages or "blocks" not in pages[0]:
         raise RuntimeError("no up-to-date pages.jsonl - run without --no-crawl")
+    if not args.no_crawl and not args.dry_run:
+        verify_previous(ddir, pages)
 
     resolved = None
     sources_list = load_url_list(args.sources_file, domain)
@@ -359,12 +362,14 @@ def process(domain: str, args, cfg: dict) -> dict:
     fields = FIELDS + (["keyword"] if resolved is not None else [])
     write_csv(ddir / "recommendations.csv", rows, fields)
     write_csv(ddir / "links.csv", accepted, fields[2:])
+    max_links = args.max_links or cfg["max_links_per_page"]
+    (ddir / "links-for-agent.md").write_text(agent.agent_markdown(domain, accepted, agent.thresholds(cfg, max_links)),
+                                             encoding="utf-8")
     summary = None
     if resolved is not None:
         summary = keyword_summary(resolved, rows, pages)
         write_csv(ddir / "keywords_summary.csv", summary, list(summary[0].keys()) if summary else ["keyword"])
     pages_with = len({r["source_url"] for r in accepted})
-    max_links = args.max_links or cfg["max_links_per_page"]
     stats = {"Jev cost": jev_cost(cost)}
     if vectors:
         stats["Embeddings cost"] = f"${emb_cost:.3f}"
@@ -372,8 +377,32 @@ def process(domain: str, args, cfg: dict) -> dict:
     print(f"links to insert: {len(accepted)} on {pages_with} pages "
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")
     print(f"done in {time.monotonic() - started:.0f} s")
-    print(f"→ {ddir / 'report.html'}\n→ {ddir / 'links.csv'}")
+    print(f"→ {ddir / 'report.html'}\n→ {ddir / 'links.csv'}\n→ {ddir / 'links-for-agent.md'} (for a coding agent)")
     return {"domain": domain, "links": len(accepted), "pages": pages_with, "cost": round(cost + emb_cost, 4)}
+
+
+def verify_previous(ddir: Path, pages: list[dict]) -> None:
+    """The links handed out by the previous run (links-for-agent.md), checked on the fresh crawl
+    before this run replaces them - inserted links drop out of the new suggestions as "already
+    linked", and their check stays in verify.csv and the report's Verification tab."""
+    previous = ddir / "links-for-agent.md"
+    if not previous.exists():
+        return
+    try:
+        links = agent.read_links(previous)
+    except RuntimeError as e:
+        print(f"  ! {e}")
+        return
+    if not links:
+        return
+    by_url = {norm_url(p["url"]): p for p in pages}
+    results = verify.check_pages(links, by_url, "crawl")
+    for r in results:
+        if r["status"] in ("ok", "other_text", "other_place") and norm_url(r["target_url"]) not in by_url:
+            r["note"] = (r["note"] + "; " if r["note"] else "") + "target not in this crawl (404, redirect or noindex?)"
+    write_csv(ddir / "verify.csv", results, verify.FIELDS)
+    shutil.copy(previous, ddir / "links-previous.md")
+    print(f"links handed out last time: {verify.summary(results)} → {ddir / 'verify.csv'}")
 
 
 def run(args) -> None:

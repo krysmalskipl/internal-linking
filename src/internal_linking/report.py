@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import embeddings
+from . import agent, embeddings, verify
 from .anchors import detect_lang
 from .common import clean_title, data_dir, is_archive, norm_url, read_csv, read_jsonl, site_suffixes
 from .config import load_config
@@ -120,6 +120,11 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
                      "sim": round(cfg.get("similarity_min", 0) * 100), "max": max_links},
         "stats": stats or {},
         "embeddings": f"{model}, {dims} dimensions" if vectors else "",
+        "agent": agent.guidelines(domain),
+        "verify": [{"st": v["status"], "s": v["source_url"], "a": v["anchor"], "t": v["target_url"],
+                    "f": v.get("found_text", ""), "n": v.get("note", ""), "c": v.get("checked", ""), "w": v.get("where", "")}
+                   for v in verify.load(path.parent)],
+        "version": agent.__version__,
         "rows": [_compact(r) for r in rows],
         "pages": page_summary(pages, cfg) if pages else {},
         "graph": link_graph(pages, vectors) if pages else {"nodes": [], "links": [], "near": []},
@@ -333,10 +338,11 @@ details.tbl table { margin-top:8px } details.tbl td { font-variant-numeric:tabul
     <button class="tab" data-view="in" title="for each page: the pages it will get links from">Linked from</button>
     <button class="tab" data-view="pagelist" title="every page with its links today and after the changes">Pages</button>
     <button class="tab" data-view="graph" id="tab-graph" title="the whole site as a graph: pages, links today, new links, similarity">Graph</button>
+    <button class="tab" data-view="verify" id="tab-verify" title="are the links handed out inserted? (internal-linking verify)">Verification</button>
     <button class="tab" data-view="keywords" id="tab-kw">Keywords</button><button class="tab" data-view="rejected">Rejected</button>
     <div class="right"><select id="sort" class="sort" aria-label="Sort">
       <option value="count">Most new links</option><option value="weak">Weakest linked today</option><option value="az">A-Z</option></select>
-      <button class="btn" id="toggle-all">Expand all</button><button class="btn primary" id="csv">Download CSV</button></div></div>
+      <button class="btn" id="toggle-all">Expand all</button><button class="btn" id="md" title="the selected links with instructions for a coding agent (Claude Code, Antigravity...) that inserts them in the site's source; `internal-linking verify` checks the result">For AI agent (.md)</button><button class="btn primary" id="csv">Download CSV</button></div></div>
   <div id="view"></div>
   <section id="graph-wrap" hidden>
     <div class="gbar">
@@ -382,7 +388,7 @@ const langs = [...new Set(rows.map(r => r.l).filter(Boolean))];
 const keywords = [...new Set(rows.map(r => r.k).filter(Boolean))].sort();
 let S = { ...D.defaults, type:"all", lang:"all", kw:"all", q:"", view:"out", sort:"count", hidden:{} };
 try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) {}
-if (!["out", "in", "pagelist", "graph", "keywords", "rejected"].includes(S.view)) S.view = S.view === "targets" ? "in" : "out";
+if (!["out", "in", "pagelist", "graph", "verify", "keywords", "rejected"].includes(S.view)) S.view = S.view === "targets" ? "in" : "out";
 const inbound = u => (D.pages[u] || {}).in;
 // how a page is linked today: "orphan" - no internal link at all (only the sitemap knows it);
 // "none" - no links in other pages' content, only menu, footer or breadcrumbs; "weak" - 1-2 in content
@@ -408,6 +414,11 @@ $("sub").textContent = D.domain + " · " + D.date + " · " + rows.length + " sug
   (D.embeddings ? " · embeddings: " + D.embeddings + (D.stats["Embeddings cost"] ? " (" + D.stats["Embeddings cost"] + ")" : "") : "");
 if (!rows.some(r => r.si != null)) $("f-sim-wrap").hidden = true;
 if (!(D.graph && D.graph.nodes.length)) { $("tab-graph").hidden = true; if (S.view === "graph") S.view = "out"; }
+if (!D.verify.length) { $("tab-verify").hidden = true; if (S.view === "verify") S.view = "out"; }
+// verify.py statuses: class of the badge, label (icon + words, never colour alone)
+const VSTATE = { ok: ["new", "✓ inserted"], other_text: ["weak", "! other link text"], other_place: ["weak", "! other passage"],
+  outside_content: ["weak", "! menu or footer only"], missing: ["orphan", "✗ not linked yet"],
+  target_error: ["orphan", "✗ target does not load"], page_error: ["orphan", "✗ page did not load"] };
 $("f-lang").innerHTML = '<option value="all">all</option>' + langs.map(l => `<option>${esc(l)}</option>`).join("");
 if (langs.length < 2) $("f-lang-wrap").hidden = true;
 $("f-kw").innerHTML = '<option value="all">all keywords</option>' + keywords.map(k => `<option>${esc(k)}</option>`).join("");
@@ -485,7 +496,8 @@ function render() {
   const orphansFixed = [...targets].filter(u => linkState(u) === "orphan").length;
   $("stats").innerHTML = [["Links to insert", acc.length], ["Pages getting links", pages.size],
     ["Pages linked to", targets.size], ["Orphans fixed", Object.keys(D.pages).length ? orphansFixed : "–"],
-    ["Share accepted", judged ? Math.round(100 * acc.length / judged) + "%" : "–"]]
+    ["Share accepted", judged ? Math.round(100 * acc.length / judged) + "%" : "–"],
+    ...(D.verify.length ? [["Inserted (verified)", `${D.verify.filter(v => v.st === "ok").length} / ${D.verify.length}`]] : [])]
     .map(([l, v]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.view === S.view));
   const graphView = S.view === "graph";
@@ -539,6 +551,22 @@ function render() {
             ${x.nout ? `<button class="linkish" data-goto="out" data-q="${esc(path(x.u))}">targets ›</button>` : ""}
             ${G.has(x.u) ? `<button class="linkish" data-goto="graph" data-u="${esc(x.u)}">graph ›</button>` : ""}</td></tr>`).join("") +
       "</table></section>" + (shownList.length > shown * 5 ? `<div class="more"><button class="btn" id="more">Show more (${shownList.length - shown * 5} left)</button></div>` : "");
+  } else if (S.view === "verify") {
+    const counts = D.verify.reduce((o, x) => (o[x.st] = (o[x.st] || 0) + 1, o), {});
+    const where = D.verify[0].w === "live" ? "on the live site" : D.verify[0].w === "crawl" ? "on the last crawl" : "on " + D.verify[0].w;
+    const list = D.verify.filter(x => !S.hidden[x.st] && (!S.q || [x.s, x.t, x.a].some(y => y.toLowerCase().includes(S.q.trim().toLowerCase()))))
+      .sort((a, b) => (a.st === "ok") - (b.st === "ok"));
+    v.innerHTML = `<p class="muted">${D.verify.length} links checked ${esc(where)}, ${esc(D.verify[0].c.replace("T", " "))}.
+        Check again after changes: <code>internal-linking verify --domain ${esc(D.domain)}</code> (add <code>--base-url</code> for a local preview).</p>
+      <div class="chips">` + Object.keys(VSTATE).filter(k => counts[k]).map(k =>
+        `<span class="chip ${S.hidden[k] ? "" : "on"}" data-reason="${k}">${esc(VSTATE[k][1])} · ${counts[k]}</span>`).join("") +
+      `</div><section class="group">` + (list.length ? list.slice(0, shown * 5).map(x =>
+        `<div class="rej"><div>${esc(path(x.s))} · <b>“${esc(x.a)}”</b> → <a href="${esc(x.t)}" target="_blank">${esc(path(x.t))}</a>
+          ${x.f && x.st !== "ok" ? `<div class="muted" style="font-size:13px">found: “${esc(x.f)}”</div>` : ""}
+          ${x.n ? `<div class="muted" style="font-size:13px">${esc(x.n)}</div>` : ""}</div>
+          <div><span class="badge ${(VSTATE[x.st] || ["weak"])[0]}">${esc((VSTATE[x.st] || [0, x.st])[1])}</span></div></div>`).join("")
+        : '<div class="empty">Nothing with these filters.</div>') + "</section>" +
+      (list.length > shown * 5 ? `<div class="more"><button class="btn" id="more">Show more (${list.length - shown * 5} left)</button></div>` : "");
   } else if (S.view === "keywords") {
     const kws = groups(rows.filter(r => r.k), "k");
     v.innerHTML = `<section class="group"><table class="kw"><tr><th>Keyword</th><th>Target</th><th>Found on</th><th>Links</th><th>Main reject reasons</th></tr>` +
@@ -595,8 +623,35 @@ $("csv").addEventListener("click", () => {
   const acc = evaluate(), cols = ["source_url", "source_title", "placement", "anchor", "anchor_type", "target_url", "target_title", "score", "similarity", "context"];
   const q = x => '"' + String(x ?? "").replace(/"/g, '""') + '"';
   const lines = [cols.join(",")].concat(acc.map(r => [r.s, r.st, r.pl, r.a, r.ty, r.t, r.tt, r.sc, r.si, r.c].map(q).join(",")));
-  const blob = new Blob(["﻿" + lines.join("\n")], { type:"text/csv" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `links-${D.domain}.csv`; a.click();
+  download("﻿" + lines.join("\n"), `links-${D.domain}.csv`, "text/csv");
+});
+function download(text, name, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
+}
+// the same file as links-for-agent.md from `run` (agent.py), for the current selection
+function agentMarkdown(list) {
+  const by = new Map(), oneLine = x => String(x ?? "").split(/\s+/).filter(Boolean).join(" ");
+  for (const r of list) { if (!by.has(r.s)) by.set(r.s, []); by.get(r.s).push(r); }
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const filters = `thresholds: score ≥ ${S.score}%, context ≥ ${S.ctx}%, anchor ≥ ${S.anc}%, cannibalisation < ${S.can}%, ` +
+    `at most ${S.max} per page` + (S.val ? `, value ≥ ${S.val}%` : "") + (S.sim ? `, page similarity ≥ ${S.sim}%` : "");
+  const tpath = u => { try { const x = new URL(u); return (x.pathname || "/") + x.search; } catch (e) { return u; } };
+  const lines = [`# Internal links to insert - ${D.domain}`, "",
+    `${plural(list.length, "link")} on ${plural(by.size, "page")} · internal-linking ${D.version}, ${new Date().toISOString().slice(0, 10)} · ${filters}`,
+    "", D.agent, "", "## Links", ""];
+  for (const [s, rs] of by) {
+    lines.push(`### ${tpath(s)} - ${rs[0].st || ""}`, "", `Page: ${s}`, "");
+    rs.forEach((r, i) => lines.push(`${i + 1}. Link text: \`${r.a}\` → \`${tpath(r.t)}\` - ${r.tt || ""}`, `   > ${oneLine(r.c)}`, ""));
+  }
+  const cell = x => { x = oneLine(x); return /[",\r\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+  lines.push("## For `internal-linking verify` - do not edit", "", "```csv", "source_url,anchor,target_url,context",
+    ...list.map(r => [r.s, r.a, r.t, r.c].map(cell).join(",")), "```", "");
+  return lines.join("\n");
+}
+$("md").addEventListener("click", () => {
+  const acc = [...evaluate()].sort((a, b) => a.s.localeCompare(b.s) || b.sc - a.sc);
+  download(agentMarkdown(acc), `links-for-agent-${D.domain}.md`, "text/markdown");
 });
 // ---- Graph view: the whole site with force-graph (inlined above) - pages, links today, new links, similarity ----
 const G = (() => {
