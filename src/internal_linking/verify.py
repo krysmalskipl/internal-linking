@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import agent
-from .common import data_dir, norm_url, read_csv, write_csv
+from .common import bare_host, data_dir, norm_url, read_csv, write_csv
 from .crawl import ROBOTS_AGENT, extract, fetch, load_robots
 
 FIELDS = ["status", "source_url", "anchor", "target_url", "found_text", "note", "checked", "where"]
@@ -91,13 +91,33 @@ def default_links(ddir: Path) -> Path:
     for name in ("links-for-agent.md", "links.csv"):
         if (ddir / name).exists():
             return ddir / name
-    raise SystemExit(f"no links to check in {ddir} - run `internal-linking run` first or give --links")
+    raise RuntimeError(f"no links to check in {ddir} - run `internal-linking run` first or give --links")
 
 
-def verify(domain: str, links_path: str | None = None, base_url: str | None = None, delay: float = 0.5) -> list[dict]:
+DOWNLOADS = Path.home() / "Downloads"
+
+
+def links_path(arg: str | None, domain: str, ddir: Path) -> Path:
+    """--links: a file; "latest" - the newest list downloaded from this domain's report; none - the
+    list from the last run (links-for-agent.md, else links.csv)."""
+    if not arg:
+        return default_links(ddir)
+    if arg == "latest":
+        host = bare_host(domain.removeprefix("https://").removeprefix("http://").strip("/"))
+        found = agent.link_files(DOWNLOADS, host) or agent.link_files(Path.cwd(), host)
+        if not found:
+            raise RuntimeError(f"no links-for-agent-{host}-….md or links-{host}-….csv in {DOWNLOADS} or here - "
+                               "download one from the report or give its path")
+        return found[0]
+    return Path(arg).expanduser()
+
+
+def verify(domain: str, links_path_arg: str | None = None, base_url: str | None = None, delay: float = 0.5) -> list[dict]:
     """Fetches the pages that should have links (live, or from base_url) and checks every link."""
     ddir = data_dir(domain)
-    links = agent.read_links(links_path or default_links(ddir))
+    source = links_path(links_path_arg, domain, ddir)
+    print(f"links from {source}")
+    links = agent.read_links(source)
     live = f"https://{domain.removeprefix('https://').removeprefix('http://').strip('/')}"
     base = (base_url or "").rstrip("/")
     robots = None if base else load_robots(live)[0]
@@ -152,7 +172,11 @@ def print_results(results: list[dict], path: Path) -> None:
 def verify_command(args) -> None:
     from . import report  # report reads verify.csv for its Verification tab
 
-    results = verify(args.domain, args.links, args.base_url, args.delay)
+    try:
+        results = verify(args.domain, args.links, args.base_url, args.delay)
+    except RuntimeError as e:
+        print(f"! {e}")
+        sys.exit(2)
     ddir = data_dir(args.domain)
     print_results(results, ddir / "verify.csv")
     if (ddir / "recommendations.csv").exists():
@@ -168,7 +192,8 @@ def load(ddir: Path) -> list[dict]:
 def add_parser(sub) -> None:
     p = sub.add_parser("verify", help="check that the proposed links are on the site (live or a local preview)")
     p.add_argument("--domain", required=True, help="e.g. example.com")
-    p.add_argument("--links", help="links-for-agent.md or a CSV (default: data/<domain>/links-for-agent.md)")
+    p.add_argument("--links", help="links-for-agent.md or a CSV; 'latest' = the newest one downloaded from the "
+                                   "report to ~/Downloads (default: data/<domain>/links-for-agent.md)")
     p.add_argument("--base-url", help="check a local preview instead of the live site, e.g. http://localhost:4321")
     p.add_argument("--delay", type=float, default=0.5, help="seconds between requests")
     p.set_defaults(func=verify_command)

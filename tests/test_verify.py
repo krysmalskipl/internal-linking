@@ -122,3 +122,22 @@ def test_run_checks_the_previous_list_on_the_fresh_crawl(data, site, monkeypatch
     assert "target not in this crawl" in results[0]["note"]
     assert (data / "links-previous.md").exists()
     assert "Inserted (verified)" in (data / "report.html").read_text(encoding="utf-8")
+
+
+def test_a_missing_links_file_gives_a_message_with_the_files_that_are_there(data, tmp_path, monkeypatch, capsys):
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    older = downloads / "links-for-agent-example.pl-2026-10-11-0900.md"
+    newer = downloads / "links-for-agent-example.pl-2026-10-11-1312.md"
+    for f in (older, newer):
+        f.write_text((data / "links-for-agent.md").read_text(encoding="utf-8"), encoding="utf-8")
+    import os
+    os.utime(older, (1, 1))
+    args = dict(domain="example.pl", base_url=None, delay=0, config=None)
+    with pytest.raises(SystemExit) as e:
+        verify.verify_command(types.SimpleNamespace(links=str(downloads / "links-for-agent-example.pl-2026-10-11-1200.md"), **args))
+    out = capsys.readouterr().out
+    assert e.value.code == 2 and "no such file" in out and "Traceback" not in out
+    assert out.index(newer.name) < out.index(older.name)  # newest first
+    monkeypatch.setattr(verify, "DOWNLOADS", downloads)
+    assert verify.links_path("latest", "https://www.example.pl", data) == newer

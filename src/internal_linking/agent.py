@@ -72,10 +72,22 @@ def agent_markdown(domain: str, rows: list[dict], summary: str = "", generated: 
     return "\n".join(lines)
 
 
+def link_files(folder: Path, domain: str = "") -> list[Path]:
+    """Link lists downloaded from the report (links-for-agent-<domain>-<time>.md, links-<domain>-….csv)
+    in a folder, newest first."""
+    names = [f"links-for-agent-{domain}*.md", f"links-{domain}*.csv"] if domain else ["links-for-agent-*.md", "links-*.csv"]
+    found = {p for name in names for p in folder.glob(name)} if folder.is_dir() else set()
+    return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
 def read_links(path: str | Path) -> list[dict]:
     """The links to check: a CSV with source_url, anchor and target_url (links.csv, the report's CSV
     export) or the CSV block at the end of a links-for-agent.md."""
-    path = Path(path)
+    path = Path(path).expanduser()
+    if not path.is_file():
+        near = link_files(path.parent)[:5]
+        raise RuntimeError(f"no such file: {path}" + ("\nlink lists in that folder, newest first:\n" +
+                                                       "\n".join(f"  {p}" for p in near) if near else ""))
     text = path.read_text(encoding="utf-8-sig")
     if path.suffix.lower() == ".md":
         m = re.search(r"```csv\n(.*?)\n```", text, re.S)
