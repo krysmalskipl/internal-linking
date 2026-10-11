@@ -260,6 +260,71 @@ def reject_reason(row: dict, cfg: dict) -> str:
     return ""
 
 
+# Fan-out and semantic pairs have no phrase that names the target: Jev picks the link text from the
+# passage's own phrases (passages.phrase_candidates), or none when no phrase announces the target.
+ANCHOR_NONE = "none"
+
+
+def anchor_questions(phrases: list[str], lang: str = "pl") -> dict:
+    """One choice question: which phrase (f1, f2...) of the passage should carry the link."""
+    options = {f"f{n + 1}": f"„{p}”" if lang != "en" else f"\"{p}\"" for n, p in enumerate(phrases)}
+    if lang == "en":
+        return {"link_text": {
+            "type": "choice",
+            "instructions": "Which phrase from the passage is the best link text for a link to the target page? "
+                            "Prefer a phrase that matches the search query the target answers and that the reader "
+                            "would understand on its own. Choose none when no phrase announces the target.",
+            "criteria": {**options, ANCHOR_NONE: "None - no phrase announces the target page"}}}
+    return {"fraza": {
+        "type": "choice",
+        "instructions": "Która fraza z fragmentu jest najlepszym tekstem linku do strony docelowej? Preferuj "
+                        "frazę zbieżną z zapytaniem, na które odpowiada cel, zrozumiałą sama w sobie. Wybierz "
+                        "none, gdy żadna fraza nie zapowiada celu.",
+        "criteria": {**options, ANCHOR_NONE: "Żadna - żadna fraza nie zapowiada strony docelowej"}}}
+
+
+def anchor_state(src: dict, src_title: str, blocks: list[dict], b: int, target: dict, target_title: str,
+                 query: str, lang: str = "pl") -> dict:
+    """What Jev sees when picking the link text: the passage, the target and the query it answers."""
+    raw = blocks[b].get("raw") or blocks[b]["text"]
+    if lang == "en":
+        return {"source_page": {"title": src_title, "url": src["url"]}, "passage": raw[:CONTEXT_CHARS * 2],
+                "search_query": query,
+                "target_page": {"title": target_title, "h1": target["h1"], "description": target["meta"][:200],
+                                "url": target["url"]}}
+    return {"strona_zrodlowa": {"tytul": src_title, "url": src["url"]}, "fragment": raw[:CONTEXT_CHARS * 2],
+            "zapytanie": query,
+            "strona_docelowa": {"tytul": target_title, "h1": target["h1"], "opis": target["meta"][:200],
+                                "url": target["url"]}}
+
+
+def anchor_cache_key(state: dict, qs: dict, version: str) -> str:
+    return hashlib.sha1(json.dumps({"state": state, "questions": qs, "version": version},
+                                   ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def choose_anchor(state: dict, qs: dict) -> dict:
+    return decide(state, qs)
+
+
+def chosen_anchor(resp: dict, phrases: list[str]) -> tuple[str | None, float]:
+    """Jev's pick → (phrase or None, its probability). Raises KeyError etc. on a malformed answer."""
+    answer = next(iter(resp["answers"].values()))
+    choice = answer["choice"]
+    prob = round(float(answer["probabilities"].get(choice, 0)), 3)
+    if choice == ANCHOR_NONE:
+        return None, prob
+    return phrases[int(choice.removeprefix("f")) - 1], prob
+
+
+def anchor_well_formed(resp: dict, phrases: list[str]) -> bool:
+    try:
+        chosen_anchor(resp, phrases)
+        return True
+    except (KeyError, TypeError, AttributeError, ValueError, IndexError, StopIteration):
+        return False
+
+
 def add_parser(sub) -> None:
     p = sub.add_parser("questions", help="print the questions sent to Jev for every pair")
     p.add_argument("--lang", choices=["pl", "en"], default="en")

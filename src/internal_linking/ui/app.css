@@ -1,6 +1,6 @@
 /* the same tokens as the report (report.py), so the panel and the report read as one tool */
 :root { --bg:#ffffff; --panel:#ffffff; --ink:#0a0a0a; --muted:#5e5e66; --line:#e6e4ee; --soft:#f6f5fb;
-  --accent:#5b2ee0; --accent-btn:#5b2ee0; --accent-soft:#eeeafd; --good:#5b2ee0; --warn:#c98a12; --bad:#d23c2a;
+  --accent:#5b2ee0; --accent-btn:#5b2ee0; --accent-soft:#eeeafd; --good:#5b2ee0; --warn:#c98a12; --bad:#d23c2a; --green:#1baf7a;
   --shadow:0 1px 2px rgba(10,10,10,.05); --code:#f3f2f8;
   --display:"Space Grotesk",system-ui,sans-serif; --body:"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color-scheme:light }
@@ -27,6 +27,7 @@ code { background:var(--code); border-radius:5px; padding:1px 5px }
   border-radius:999px; cursor:pointer } .theme button.on { background:var(--ink); color:var(--bg); font-weight:600 }
 
 .shell { display:grid; grid-template-columns:280px 1fr; gap:20px; max-width:1320px; margin:0 auto; padding:10px 20px 60px }
+.shell > * { min-width:0 }  /* a wide table scrolls in its own box, not the page */
 .side { position:sticky; top:12px; align-self:start; background:var(--panel); border:1px solid var(--line); border-radius:14px;
   padding:14px; box-shadow:var(--shadow); max-height:calc(100vh - 24px); overflow:auto }
 .new-domain { display:flex; gap:6px; margin-bottom:12px } .new-domain input { flex:1; min-width:0 }
@@ -102,6 +103,16 @@ td.n { font-variant-numeric:tabular-nums; white-space:nowrap }
 .chip { font:inherit; font-size:12px; background:var(--soft); border:1px solid var(--line); border-radius:999px; padding:3px 10px;
   cursor:pointer; color:var(--ink) } .chip.on { border-color:var(--accent); color:var(--accent) }
 .empty { color:var(--muted); padding:24px; text-align:center }
+.legend { display:flex; gap:12px; flex-wrap:wrap; font-size:13px; color:var(--muted); margin:6px 0 12px }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px }
+.cov { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.4fr); gap:6px 14px; align-items:center; font-size:14px }
+.cov button { font:inherit; text-align:left; background:none; border:0; color:var(--ink); cursor:pointer; padding:2px 0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .cov button.on { color:var(--accent); font-weight:700 }
+.covbar { display:flex; height:14px; border-radius:999px; overflow:hidden; background:var(--soft) } .covbar i { display:block }
+.st-hub { background:var(--accent) } .st-linked { background:var(--green) } .st-unlinked { background:var(--warn) } .st-gap { background:var(--bad) }
+.sbadge { display:inline-block; font-size:12px; font-weight:600; border-radius:999px; padding:2px 9px; white-space:nowrap; color:#fff }
+.sbadge.st-linked, .sbadge.st-unlinked { color:#0a0a0a }
+.tblwrap { overflow-x:auto } table.fq { min-width:620px } .row select { width:auto; max-width:100% }
 .keyrow { display:grid; grid-template-columns:200px 1fr auto; gap:8px 12px; align-items:center; margin-bottom:10px }
 .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:9px 14px;
   border-radius:8px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none; max-width:min(560px, 90vw) }

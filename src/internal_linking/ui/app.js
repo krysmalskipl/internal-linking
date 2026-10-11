@@ -10,7 +10,7 @@ const pathOf = u => { try { return new URL(u).pathname; } catch (e) { return u; 
 const fileUrl = (d, name, download) =>
   `/files/${encodeURIComponent(d)}/${name.split("/").map(encodeURIComponent).join("/")}${download ? "?download" : ""}`;
 
-const TABS = [["overview", "Overview"], ["run", "Run"], ["verify", "Verify"], ["quality", "Quality"], ["files", "Files"], ["history", "History"]];
+const TABS = [["overview", "Overview"], ["run", "Run"], ["verify", "Verify"], ["fanout", "Fan-out"], ["quality", "Quality"], ["files", "Files"], ["history", "History"]];
 // verify.py statuses: badge class and label (an icon and words, never colour alone)
 const VSTATE = { ok: ["ok", "✓ inserted"], other_text: ["warn", "! other link text"], other_place: ["warn", "! other passage"],
   outside_content: ["warn", "! menu or footer only"], missing: ["bad", "✗ not linked yet"],
@@ -92,7 +92,7 @@ function render() {
     <div class="tabs" role="tablist">${TABS.map(([k, label]) =>
       `<button class="tab ${k === tab ? "on" : ""}" data-tab="${k}" role="tab" aria-selected="${k === tab}">${label}</button>`).join("")}</div>
     <div id="tab-body"></div>`;
-  ({ overview, run: runTab, verify: verifyTab, quality, files, history })[tab]($("tab-body"), p);
+  ({ overview, run: runTab, verify: verifyTab, fanout: fanoutTab, quality, files, history })[tab]($("tab-body"), p);
 }
 
 function overview(el, p) {
@@ -102,6 +102,7 @@ function overview(el, p) {
       <div class="stat"><b>${p.pages ?? "–"}</b><span>pages crawled</span></div>
       <div class="stat"><b>${esc(s["Jev cost"] || "–")}</b><span>Jev cost</span></div>
       <div class="stat"><b>${esc(s["Embeddings cost"] || "–")}</b><span>embeddings cost</span></div>
+      ${s["Fan-out cost"] ? `<div class="stat"><b>${esc(s["Fan-out cost"])}</b><span>fan-out cost</span></div>` : ""}
       <div class="stat"><b>${v.total ? `${v.ok} / ${v.total}` : "–"}</b><span>inserted (verified)</span></div></div>
     <div class="card"><h2>Next steps</h2><ol class="steps">
       <li>${p.run_at ? `Run done ${esc(when(p.run_at))}.` : "Not run yet."} <a href="#/d/${encodeURIComponent(p.domain)}/run">Run ${p.run_at ? "again" : ""} ›</a></li>
@@ -129,11 +130,12 @@ function pick(cmd, name, label, help, items, first) {
 }
 const inputs = (p, exts) => p.inputs.filter(f => exts.some(x => f.name.endsWith(x))).map(f => [f.name.replace(/^inputs\//, ""), f.name.replace(/^inputs\//, "")]);
 const upload = `<div class="row"><label class="btn" for="upload">Upload a file…</label>
-  <input id="upload" type="file" accept=".csv,.txt,.md" hidden><span class="muted small">keyword lists, URL lists, link lists (.csv, .txt, .md)</span></div>`;
+  <input id="upload" type="file" accept=".csv,.txt,.md" hidden><span class="muted small">keyword lists, URL lists, link lists, Search Console exports (.csv, .txt, .md)</span></div>`;
 
 // options most runs never change sit under Advanced; its summary counts the changed ones, so none applies unseen
 const ADVANCED = { run: ["sources", "targets", "sources_file", "targets_file", "keywords", "no_crawl", "no_embeddings", "dry_run",
-  "max_links", "delay", "workers"], verify: ["delay"], label: ["port"] };
+  "fanout", "semantic", "gsc", "fanout_pages", "fanout_pages_file", "fanout_max", "max_links", "delay", "workers"],
+  verify: ["delay"], label: ["port"] };
 const opened = {};            // command → Advanced opened or closed by hand
 const changed = cmd => ADVANCED[cmd].filter(n => ![undefined, "", false].includes(((forms[current] || {})[cmd] || {})[n])).length;
 const changedText = n => n ? ` · ${n} changed` : "";
@@ -162,6 +164,16 @@ function runTab(el, p) {
       ${check("run", "no_crawl", "Reuse the downloaded pages", crawled ? "skip the crawl (faster; no check of the previous links)" : "no pages downloaded yet", !crawled)}
       ${check("run", "no_embeddings", "Skip embeddings", "no similarity, no topic map")}
       ${check("run", "dry_run", "Dry run", "count pairs and estimate the cost, no Jev calls")}
+    </div>
+    <h3>Fan-out and semantic phrases</h3>
+    <p class="muted small">Links where the text answers a question instead of naming the page. Paid: one model call per hub
+      (about $0.001) and two Jev calls per link found. Try a dry run first.</p><div class="grid">
+      ${check("run", "fanout", "Query fan-out", "the sub-queries of hub pages, which page answers each, links to the ones without a link")}
+      ${check("run", "semantic", "Semantic phrases", "link pages from paragraphs close in meaning, without their name in the text")}
+      ${pick("run", "gsc", "Search Console queries (optional)", "uploaded .csv with page + query (+ clicks, impressions) - see README", inputs(p, [".csv"]), "none - sub-queries from the model only")}
+      ${field("run", "fanout_pages", "Hub pages (regex on the path)", "empty: the best linked content pages", 'type="text" placeholder="^/blog/"')}
+      ${pick("run", "fanout_pages_file", "…or a list of hub pages", "uploaded .txt/.csv, one URL or path per line", lists, "—")}
+      ${field("run", "fanout_max", "Most hubs", "default 100", 'type="number" min="1" max="5000" placeholder="100"')}
     </div>
     <h3>Limits and speed</h3><div class="grid">
       ${field("run", "max_links", "New links per page", "default from the thresholds (3)", 'type="number" min="1" max="50" placeholder="3"')}
@@ -213,7 +225,9 @@ function quality(el) {
   el.innerHTML = `<div class="card"><h2>Measure the quality on your site</h2>
     <p class="muted small">Draw a sample of suggestions, label them Yes / No (about 15 minutes for 50), then measure each signal and tune the thresholds.</p>
     <h3 class="step">1. Draw a sample</h3>
-    <div class="grid">${field("sample", "n", "Sample size", "pairs to label (default 50)", 'type="number" min="10" max="500" placeholder="50"')}</div>
+    <div class="grid">${field("sample", "n", "Sample size", "pairs to label (default 50)", 'type="number" min="10" max="500" placeholder="50"')}
+      ${pick("sample", "anchor_type", "Match type", "e.g. only fan-out pairs, to measure them before they join the default thresholds",
+        [["exact", "exact"], ["partial", "partial"], ["fanout", "fan-out"], ["semantic", "semantic"]], "all types")}</div>
     <div class="row"><button class="btn primary" data-start="sample">Draw a sample</button></div>
     <h3 class="step">2. Label it</h3>
     <div class="row">${labelling ? `<a class="btn primary" href="http://127.0.0.1:${esc(value("label", "port", "") || 8765)}/" target="_blank" rel="noopener">Open labelling</a>
@@ -227,6 +241,58 @@ function quality(el) {
     <div id="job"></div>`;
   renderJob();
 }
+
+// ---- Fan-out: the sub-queries of the hubs and who answers them (fanout.json from `run --fanout`) ----
+const FSTATE = { hub: "the hub answers", linked: "a linked page answers", unlinked: "a page without a link answers", gap: "nobody answers - gap" };
+const FSHORT = { hub: "hub", linked: "linked", unlinked: "no link", gap: "gap" };
+const FSRC = { gsc: "GSC", "gsc+ai": "GSC + AI", ai: "AI" };
+const fan = { domain: null, stamp: "", data: null, hub: "all", st: "all", src: "all" };
+async function fanoutTab(el, p) {
+  const file = p.files.find(f => f.name === "fanout.json");
+  if (!file) {
+    el.innerHTML = `<div class="card"><h2>Query fan-out</h2><p class="muted small">No fan-out results yet. Tick <i>Query fan-out</i>
+      under <i>Advanced</i> in <a href="#/d/${encodeURIComponent(p.domain)}/run">Run</a> - optionally with a Search Console export.
+      Each hub page gets 10-15 sub-queries; the table here shows which page answers each, which pages could get a link and
+      which questions nobody on the site answers yet.</p></div>`;
+    return;
+  }
+  if (fan.domain !== p.domain || fan.stamp !== file.modified) {
+    el.innerHTML = '<p class="empty">Loading…</p>';
+    try { fan.data = await (await fetch(fileUrl(p.domain, "fanout.json"))).json(); }
+    catch (e) { el.innerHTML = `<p class="empty">Cannot read fanout.json: ${esc(e.message)}</p>`; return; }
+    Object.assign(fan, { domain: p.domain, stamp: file.modified, hub: "all", st: "all", src: "all" });
+  }
+  renderFanout(el, p);
+}
+function renderFanout(el, p) {
+  const D = fan.data, by = {};
+  for (const x of D.rows) { const c = by[x.h] = by[x.h] || { hub: 0, linked: 0, unlinked: 0, gap: 0, n: 0 }; c[x.st]++; c.n++; }
+  const hubs = D.hubs.filter(h => by[h.u]).sort((a, b) => by[b.u].unlinked - by[a.u].unlinked || by[b.u].gap - by[a.u].gap);
+  const total = Object.keys(FSTATE).reduce((o, k) => (o[k] = D.rows.filter(x => x.st === k).length, o), {});
+  const list = D.rows.filter(x => (fan.hub === "all" || x.h === fan.hub) && (fan.st === "all" || x.st === fan.st) && (fan.src === "all" || x.src === fan.src));
+  const sel = (key, label, opts) => `<select data-fan="${key}" aria-label="${label}"><option value="all">${label}: all</option>` +
+    opts.map(([k, l]) => `<option value="${esc(k)}" ${fan[key] === k ? "selected" : ""}>${esc(l)}</option>`).join("") + "</select>";
+  const seg = c => Object.keys(FSTATE).map(k => c[k] ? `<i class="st-${k}" style="width:${100 * c[k] / c.n}%" title="${esc(FSTATE[k])}: ${c[k]}"></i>` : "").join("");
+  el.innerHTML = `<div class="stats">${Object.keys(FSTATE).map(k => `<div class="stat"><b>${total[k]}</b><span>${esc(FSTATE[k])}</span></div>`).join("")}</div>
+    <div class="card"><h2>Coverage per hub</h2><p class="muted small">${D.rows.length} sub-queries of ${hubs.length} hubs${D.model ? `, generated with ${esc(D.model)}` : ""}.
+      Gaps are ideas for content, not pages to write for every query variant. Links found: <a href="${fileUrl(p.domain, "report.html")}" target="_blank" rel="noopener">report</a> (Fan-out tab) ·
+      <a href="${fileUrl(p.domain, "fanout.csv", true)}">fanout.csv</a> · <a href="${fileUrl(p.domain, "fanout_gaps.csv", true)}">fanout_gaps.csv</a></p>
+      <div class="legend">${Object.keys(FSTATE).map(k => `<span><i class="st-${k}"></i>${esc(FSTATE[k])}</span>`).join("")}</div>
+      <div class="cov">${hubs.map(h => `<button data-fan-hub="${esc(h.u)}" class="${fan.hub === h.u ? "on" : ""}" title="${esc(h.u)}">${esc(h.t || pathOf(h.u))}</button>
+        <div class="covbar" role="img" aria-label="${esc(Object.keys(FSTATE).map(k => `${FSTATE[k]}: ${by[h.u][k]}`).join(", "))}">${seg(by[h.u])}</div>`).join("")}</div></div>
+    <div class="card"><h2>Sub-queries</h2><div class="row">${sel("hub", "Hub", hubs.map(h => [h.u, h.t || pathOf(h.u)]))}${sel("st", "State", Object.entries(FSTATE))}
+      ${sel("src", "Source", Object.entries(FSRC).filter(([k]) => D.rows.some(x => x.src === k)))}<span class="muted small">${list.length} shown</span></div>
+      <div class="tblwrap"><table class="fq"><tr><th>Sub-query</th><th>Source</th><th>State</th><th>Best answer elsewhere</th><th>Link</th></tr>
+      ${list.slice(0, 500).map(x => `<tr><td><b>${esc(x.q)}</b><div class="muted small">${esc(x.ty)}${fan.hub === "all" ? " · " + esc(pathOf(x.h)) : ""}</div></td>
+        <td class="n">${esc(FSRC[x.src] || x.src)}${x.i !== "" && x.i != null ? `<div class="muted small">${x.c} clicks · ${x.i} impr.</div>` : ""}</td>
+        <td><span class="sbadge st-${x.st}">${esc(FSHORT[x.st] || x.st)}</span></td>
+        <td>${x.b ? `<a href="${esc(x.b)}" target="_blank" rel="noopener">${esc(x.bt || pathOf(x.b))}</a> <span class="muted small">${Math.round((x.s || 0) * 100)}%</span>` : "–"}</td>
+        <td class="muted small">${esc(x.lk || "–")}</td></tr>`).join("")}</table></div></div>`;
+}
+document.addEventListener("change", e => {
+  const k = e.target.dataset && e.target.dataset.fan;
+  if (k) { fan[k] = e.target.value; renderFanout($("tab-body"), proj(current)); }
+});
 
 function fileTable(d, list, emptyText) {
   return list.length ? `<table><tr><th>File</th><th>Size</th><th>Changed</th><th></th></tr>${list.map(f => `<tr>
@@ -303,6 +369,9 @@ function renderJob() {
 
 // ---- settings ---------------------------------------------------------------------------------
 const CONFIG = [["score_min", "Overall score ≥", "Jev's probability that the link is good"],
+  ["fanout_answer_min", "Fan-out: a passage answers ≥", "how close a paragraph must be to a sub-query to count as its answer"],
+  ["fanout_merge_min", "Fan-out: merge queries ≥", "a generated sub-query this close to a Search Console query is merged into it"],
+  ["semantic_min", "Semantic phrases ≥", "how close a paragraph must be to a page's name to propose a link"],
   ["context_min", "Context ≥", "the passage is about the target's topic"], ["anchor_min", "Anchor quality ≥", "the phrase is natural link text"],
   ["cannibalisation_max", "Cannibalisation <", "reject when the phrase is the source page's own topic"],
   ["similarity_min", "Page similarity ≥", "0 = off; set it after `evaluate` shows it helps"],
@@ -359,6 +428,7 @@ document.addEventListener("click", e => {
     render();
     return;
   }
+  if (t.dataset.fanHub) { fan.hub = fan.hub === t.dataset.fanHub ? "all" : t.dataset.fanHub; renderFanout($("tab-body"), proj(current)); return; }
   if (t.dataset.hide) { hidden[t.dataset.hide] = !hidden[t.dataset.hide]; renderResults(proj(current) || blank(current)); return; }
   if (t.dataset.log) {
     fetch(fileUrl(current, t.dataset.log)).then(r => r.text()).then(text => {

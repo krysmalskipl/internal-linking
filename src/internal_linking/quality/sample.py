@@ -4,6 +4,7 @@ Draws pairs not yet in the sample, evenly from 5 quantiles of the Jev score with
 (exact / partial), so the sample holds confident and uncertain suggestions of every kind. Each pair
 keeps the passage Jev judged (`context`), so `label` shows the same spot. Existing labels are kept.
 Label the pairs with `label` (or put 1 / 0 in the `ok` column), then run `evaluate`.
+--anchor-type draws from one match type only, e.g. fanout pairs before they join the default thresholds.
 """
 import random
 
@@ -11,10 +12,10 @@ from ..common import data_dir, read_csv, write_csv
 
 N_BINS = 5
 FIELDS = ["ok", "score", "similarity", "source_title", "target_title", "anchor", "anchor_type", "placement",
-          "context", "in_menu", "source_url", "target_url"]
+          "context", "in_menu", "source_url", "target_url", "passage_similarity", "subquery"]
 
 
-def sample(domain: str, n: int = 40, seed: int = 42) -> None:
+def sample(domain: str, n: int = 40, seed: int = 42, anchor_type: str | None = None) -> None:
     ddir = data_dir(domain)
     out = ddir / "sample_to_label.csv"
     existing = read_csv(out) if out.exists() else []
@@ -27,9 +28,11 @@ def sample(domain: str, n: int = 40, seed: int = 42) -> None:
             if not r.get(field):
                 r[field] = by_pair.get((r["source_url"], r["target_url"]), {}).get(field, "")
 
-    rows = [r for r in current if (r["source_url"], r["target_url"]) not in seen]
+    rows = [r for r in current if (r["source_url"], r["target_url"]) not in seen
+            and (not anchor_type or r.get("anchor_type") == anchor_type)]
     if not rows:
-        raise SystemExit("every current suggestion is already in the sample")
+        raise SystemExit(f"every current {anchor_type + ' ' if anchor_type else ''}suggestion is already in the sample"
+                         + (" - or the run had none (run with --fanout / --semantic)" if anchor_type in ("fanout", "semantic") else ""))
     rng = random.Random(seed)
     rows.sort(key=lambda r: float(r["score"] or 0))
     groups: dict[str, list[dict]] = {}
@@ -63,4 +66,6 @@ def add_parser(sub) -> None:
     p.add_argument("--domain", required=True)
     p.add_argument("--n", type=int, default=40)
     p.add_argument("--seed", type=int, default=42)
-    p.set_defaults(func=lambda args: sample(args.domain, args.n, args.seed))
+    p.add_argument("--anchor-type", choices=["exact", "partial", "fanout", "semantic"],
+                   help="only this match type (e.g. fanout, to measure it on its own)")
+    p.set_defaults(func=lambda args: sample(args.domain, args.n, args.seed, args.anchor_type))

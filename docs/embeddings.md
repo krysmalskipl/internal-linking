@@ -43,3 +43,11 @@ Drawn with [force-graph](https://github.com/vasturiano/force-graph) 1.47.4 (MIT)
 Without embeddings (the API failed, the model is unavailable, or `--no-embeddings`) the run carries on: the report has no similarity, the graph uses *By links* and has no topic map or closest pages. Run `internal-linking embed --domain example.com` later to add them without crawling or judging again.
 
 Page texts are sent to OpenRouter and the embedding model's provider, as passages already are for Jev.
+
+## Paragraphs and queries (fan-out, semantic phrases)
+
+`run --fanout` and `run --semantic` (see the README, *Query fan-out*) also embed every paragraph, list item, table cell, definition and quote of at least 8 words - with the page title and its section heading in front, since a paragraph alone often lacks its subject - by the same model and in the same way, cached in `passages.jsonl` (about $0.002 per 1,000 paragraphs). Queries - the fan-out sub-queries, and each page's name in semantic mode - are embedded the way Qwen3 Embedding expects a query: with a one-line task instruction in front (`Instruct: Given a search query, retrieve a passage of a web page that answers it`). Documents are embedded as they are. That asymmetry makes a question and the paragraph that answers it score high even when they share few words.
+
+These scores run higher than page-to-page similarity: on a Polish SEO blog the best paragraph for a sub-query scored 0.56-0.82 (10th-90th percentile). From about 0.75 the paragraph nearly always answers the question; between 0.70 and 0.75 about half do; below 0.70 the match is loose. `fanout_answer_min` and `semantic_min` (0.72) sit there, and Jev judges every link after them. Two sub-queries with different intents can still score 0.96 against each other ("co to jest plik llms.txt" and "dla kogo jest plik llms.txt"), so a generated query is merged into a Search Console one only from 0.95 (`fanout_merge_min`).
+
+Paragraph texts and queries are sent to OpenRouter and the embedding model's provider, like the page texts; the fan-out sub-queries come from the model in `FANOUT_MODEL`, which gets each hub's title, H1, description and the start of its content.

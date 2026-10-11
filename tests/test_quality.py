@@ -45,6 +45,10 @@ def test_sample_keeps_the_judged_passage_and_fills_it_in_for_old_samples(tmp_pat
 
 def run_evaluate(tmp_path, rows) -> tuple[str, dict]:
     setup(tmp_path, rows)
+    return evaluate_with(tmp_path)
+
+
+def evaluate_with(tmp_path) -> dict:
     cfg_path = tmp_path / "cfg.json"
     evaluate.evaluate(types.SimpleNamespace(domain=["example.pl"], config=str(cfg_path), target_precision=0.9,
                                             score_floor=0.9, write_config=True))
@@ -69,3 +73,27 @@ def test_no_similarity_threshold_when_it_does_not_help(tmp_path, capsys):
     cfg = run_evaluate(tmp_path, rows)
     assert cfg["similarity_min"] == 0.0
     assert "similarity" in capsys.readouterr().out
+
+
+def test_fanout_pairs_are_measured_on_their_own_and_stay_out_of_the_thresholds(tmp_path, capsys):
+    rng = np.random.default_rng(3)
+    rows = [rec(i, i % 5 != 0, round(float(rng.uniform(0.3, 0.9)), 3)) for i in range(40)]
+    # fan-out pairs: good ones close to their sub-query, bad ones far - and all weak on page similarity
+    fan = [{**rec(100 + i, i < 8, 0.1, "fanout"), "passage_similarity": 0.8 if i < 8 else 0.4} for i in range(12)]
+    ddir = setup(tmp_path, rows + fan)
+    write_csv(ddir / "recommendations.csv", rows + fan, FIELDS + ["passage_similarity", "subquery"])
+    cfg = evaluate_with(tmp_path)
+    out = capsys.readouterr().out
+    assert "fan-out and semantic pairs (not part of the threshold search): 12 labelled, 8 good" in out
+    assert "fanout   precision of the current thresholds: 8/12 good (67%)" in out
+    line = next(ln for ln in out.splitlines() if ln.startswith("passage_similarity"))
+    assert line.split()[1] == "1.00"
+    # the thresholds come from the phrase-matched pairs alone
+    assert cfg == run_evaluate(tmp_path / "phrases-only", rows)
+
+
+def test_sample_draws_one_match_type(tmp_path, capsys):
+    rows = [rec(i, True, 0.5, "exact") for i in range(10)] + [rec(10 + i, True, 0.5, "fanout") for i in range(10)]
+    ddir = setup(tmp_path, rows, labelled=False)
+    sample.sample("example.pl", n=6, anchor_type="fanout")
+    assert {r["anchor_type"] for r in read_csv(ddir / "sample_to_label.csv")} == {"fanout"}

@@ -6,7 +6,8 @@ thresholds from config.json → at most N links per page → data/<domain>/links
 recommendations.csv and report.html (with the link graph).
 
 Two modes: automatic (targets and phrases come from the pages' titles) and keyword mode
-(--keywords: only the phrases you list, see keywords.py).
+(--keywords: only the phrases you list, see keywords.py). --fanout and --semantic add pairs found
+by meaning instead of by name (fanout.py, passages.py), judged the same way.
 """
 import json
 import re
@@ -17,7 +18,7 @@ from contextlib import closing
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import agent, embeddings, verify
+from . import agent, embeddings, fanout, verify
 from . import keywords as kw
 from .anchors import NO_LINK_BLOCKS, AnchorFinder, content_words, detect_lang, text_keys, word_key
 from .common import (Progress, append_jsonl, clean_title, data_dir, is_archive, norm_url, now, parallel, read_jsonl,
@@ -31,7 +32,7 @@ from .report import write_report
 COST_PER_PAIR = 0.00007    # estimate for --dry-run (about 600 input tokens per pair)
 FIELDS = ["decision", "decision_reason", "lang", "source_url", "source_title", "placement", "anchor", "anchor_type",
           "target_url", "target_title", "in_menu", "score", "similarity", "jev_context", "jev_anchor", "jev_value",
-          "jev_cannibalisation", "jev_verdict", "context"]
+          "jev_cannibalisation", "jev_verdict", "context", "passage_similarity", "subquery"]
 
 
 def sitewide_links(pages: list[dict]) -> dict[str, set[str]]:
@@ -359,6 +360,7 @@ def process(domain: str, args, cfg: dict) -> dict:
         rows, info = find_candidates(pages, cfg, args.sources, args.targets, sources_list, targets_list)
     print(f"pages: {len(pages)}, " + ", ".join(f"{k}: {v}" for k, v in info.items())
           + f", pairs with a phrase: {len(rows)}")
+    by_meaning = getattr(args, "fanout", False) or getattr(args, "semantic", False)
     if args.dry_run:
         cache = {r["key"] for r in read_jsonl(ddir / "jev_pairs.jsonl")}
         version = jev_version()
@@ -366,7 +368,8 @@ def process(domain: str, args, cfg: dict) -> dict:
         print(f"to judge with Jev: {new} (the rest is cached), estimated cost ${new * COST_PER_PAIR:.3f}")
         if not args.no_embeddings:
             print(f"pages to embed: {embeddings.count_new(pages, ddir)} (the rest is cached)")
-        return {"domain": domain, "pairs": len(rows), "to judge": new}
+        extra = fanout.dry_run(pages, cfg, args, ddir, domain) if by_meaning else {}
+        return {"domain": domain, "pairs": len(rows), "to judge": new, **extra}
 
     vectors, emb_cost = {}, 0.0
     if not args.no_embeddings:
@@ -381,6 +384,11 @@ def process(domain: str, args, cfg: dict) -> dict:
                 hint = "the API may be down for a moment"
             print(f"  ! embeddings: {str(e)[:300]}\n    continuing without similarity and the topic map - {hint}, "
                   f"then run `internal-linking embed --domain {domain}`")
+    fan, fan_cost = None, 0.0
+    if by_meaning:
+        extra, fan, fan_cost = fanout.run(pages, cfg, args, ddir, domain,
+                                          {(r["source_url"], r["target_url"]) for r in rows})
+        rows += extra
     embeddings.add_similarity(rows, vectors)
     cost = judge(rows, ddir, args.workers) if rows else 0.0
     select(rows, cfg, args.max_links or cfg["max_links_per_page"])
@@ -388,6 +396,10 @@ def process(domain: str, args, cfg: dict) -> dict:
     rejected = [r for r in rows if r["decision"] == "reject"]
 
     rows.sort(key=lambda r: (r["decision"] != "accept", r["source_url"], -r.get("score", 0)))
+    for name in ("fanout.json", "fanout.csv", "fanout_gaps.csv"):  # a run without --fanout leaves no stale results
+        (ddir / name).unlink(missing_ok=True)
+    if fan and fan["items"]:
+        fanout.write_results(ddir, fan, rows)
     fields = FIELDS + (["keyword"] if resolved is not None else [])
     write_csv(ddir / "recommendations.csv", rows, fields)
     write_csv(ddir / "links.csv", accepted, fields[2:])
@@ -402,6 +414,8 @@ def process(domain: str, args, cfg: dict) -> dict:
     stats = {"Jev cost": jev_cost(cost)}
     if vectors:
         stats["Embeddings cost"] = f"${emb_cost:.3f}"
+    if by_meaning:
+        stats["Fan-out cost"] = f"${fan_cost:.3f}"
     # when the run was made and what it cost - `report`, `embed` and `verify` rebuild the report with it
     (ddir / "run.json").write_text(json.dumps({"run_at": run_at, "version": agent.__version__, "stats": stats,
                                                "pages": len(pages), "links": len(accepted)}, indent=2) + "\n", encoding="utf-8")
@@ -410,7 +424,9 @@ def process(domain: str, args, cfg: dict) -> dict:
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")
     print(f"done in {time.monotonic() - started:.0f} s")
     print(f"→ {ddir / 'report.html'}\n→ {ddir / 'links.csv'}\n→ {ddir / 'links-for-agent.md'} (for a coding agent)")
-    return {"domain": domain, "links": len(accepted), "pages": pages_with, "cost": round(cost + emb_cost, 4)}
+    if fan and fan["items"]:
+        print(f"→ {ddir / 'fanout.csv'} (every sub-query)\n→ {ddir / 'fanout_gaps.csv'} (content gaps)")
+    return {"domain": domain, "links": len(accepted), "pages": pages_with, "cost": round(cost + emb_cost + fan_cost, 4)}
 
 
 def verify_previous(ddir: Path, pages: list[dict]) -> None:
@@ -446,8 +462,12 @@ def run(args) -> None:
         raise SystemExit("give --domain or --domains-file")
     if args.sitemap and len(domains) > 1:
         raise SystemExit("--sitemap works with a single domain only")
-    for name in ("sources", "targets"):
-        check_regex(f"--{name}", getattr(args, name))
+    for name in ("sources", "targets", "fanout_pages"):
+        check_regex(f"--{name.replace('_', '-')}", getattr(args, name, None))
+    if (getattr(args, "fanout", False) or getattr(args, "semantic", False)) and args.no_embeddings:
+        raise RuntimeError("--fanout and --semantic match paragraphs by their embeddings - drop --no-embeddings")
+    if getattr(args, "fanout", False) and args.keywords:
+        raise RuntimeError("--fanout works in automatic mode - drop --keywords")
 
     cfg = load_config(args.config)
     summary = []
@@ -485,4 +505,13 @@ def add_parser(sub) -> None:
     p.add_argument("--sitemap", help="sitemap URL (single domain only)")
     p.add_argument("--delay", type=float, default=0.5, help="seconds between page downloads")
     p.add_argument("--workers", type=int, default=12, help="parallel Jev calls (lower it on 429 errors)")
+    f = p.add_argument_group("fan-out and semantic phrases (see README, Fan-out)")
+    f.add_argument("--fanout", action="store_true",
+                   help="query fan-out: the sub-queries of hub pages, who answers them, links to the pages that do")
+    f.add_argument("--semantic", action="store_true",
+                   help="also link pages from paragraphs close in meaning to them, without their name in the text")
+    f.add_argument("--gsc", help="Search Console CSV with page + query (+ clicks, impressions) - optional")
+    f.add_argument("--fanout-pages", help="regex on the URL path: only these pages are hubs")
+    f.add_argument("--fanout-pages-file", help="file with the hub URLs (or paths), one per line")
+    f.add_argument("--fanout-max", type=int, default=100, help="most hubs, the best linked first (default 100)")
     p.set_defaults(func=run)
