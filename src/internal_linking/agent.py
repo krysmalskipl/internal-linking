@@ -10,11 +10,11 @@ file for the current selection (report.py gets GUIDELINES from here).
 import csv
 import io
 import re
-from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import __version__
+from .common import now, shown
 
 VERIFY_FIELDS = ["source_url", "anchor", "target_url", "context"]
 GUIDELINES = """## Instructions for the coding agent
@@ -49,14 +49,15 @@ def target_path(url: str) -> str:
     return (p.path or "/") + (f"?{p.query}" if p.query else "")
 
 
-def agent_markdown(domain: str, rows: list[dict], summary: str = "") -> str:
-    """The .md for a coding agent: header, instructions, links grouped by source page, CSV block."""
+def agent_markdown(domain: str, rows: list[dict], summary: str = "", generated: str | None = None) -> str:
+    """The .md for a coding agent: header (with when it was generated), instructions, links grouped
+    by source page, CSV block."""
     by_source: dict[str, list[dict]] = {}
     for r in rows:
         by_source.setdefault(r["source_url"], []).append(r)
     lines = [f"# Internal links to insert - {domain}", "",
              f"{len(rows)} link{'s' if len(rows) != 1 else ''} on {len(by_source)} page{'s' if len(by_source) != 1 else ''}"
-             f" · internal-linking {__version__}, {date.today().isoformat()}" + (f" · {summary}" if summary else ""),
+             f" · generated {shown(generated or now())} by internal-linking {__version__}" + (f" · {summary}" if summary else ""),
              "", guidelines(domain), "", "## Links", ""]
     for source, links in by_source.items():
         lines += [f"### {target_path(source)} - {links[0].get('source_title', '')}", "", f"Page: {source}", ""]

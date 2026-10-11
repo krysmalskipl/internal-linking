@@ -12,14 +12,13 @@ a page zooms in on it: its linked pages gather around it (the more similar, the 
 rest of the site moves aside. `internal-linking report` rebuilds the file from saved results.
 """
 import json
-from datetime import date
 from pathlib import Path
 
 import numpy as np
 
 from . import agent, embeddings, verify
 from .anchors import detect_lang
-from .common import clean_title, data_dir, is_archive, norm_url, read_csv, read_jsonl, site_suffixes
+from .common import clean_title, data_dir, is_archive, norm_url, now, read_csv, read_jsonl, site_suffixes
 from .config import load_config
 from .crawl import strip_boilerplate, strip_excerpts
 
@@ -109,16 +108,18 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
                  stats: dict | None = None, pages: list[dict] | None = None,
                  vectors: dict[str, np.ndarray] | None = None) -> None:
     vectors = vectors or {}
+    run = json.loads((path.parent / "run.json").read_text()) if (path.parent / "run.json").exists() else {}
     embeddings.add_similarity(rows, vectors)  # also fills it in for results saved before embeddings
     model, dims = embeddings.settings()
     payload = {
         "domain": domain,
-        "date": date.today().isoformat(),
+        "run_at": run.get("run_at", ""),  # when `run` made the suggestions
+        "built_at": now(),                # when this file was written (a rebuild: later)
         "defaults": {"score": round(cfg["score_min"] * 100), "ctx": round(cfg["context_min"] * 100),
                      "anc": round(cfg["anchor_min"] * 100), "val": 0,
                      "can": round(cfg["cannibalisation_max"] * 100),
                      "sim": round(cfg.get("similarity_min", 0) * 100), "max": max_links},
-        "stats": stats or {},
+        "stats": stats or run.get("stats", {}),
         "embeddings": f"{model}, {dims} dimensions" if vectors else "",
         "agent": agent.guidelines(domain),
         "verify": [{"st": v["status"], "s": v["source_url"], "a": v["anchor"], "t": v["target_url"],
@@ -409,7 +410,12 @@ const stateBadge = (u, long) => { const s = STATE[linkState(u)];
 const openGroups = new Set();
 let expandAll = false;
 
-$("sub").textContent = D.domain + " · " + D.date + " · " + rows.length + " suggestions judged" +
+const timeOf = s => String(s || "").slice(0, 16).replace("T", " ");  // 2026-10-11T13:05+02:00 → 2026-10-11 13:05
+const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
+$("sub").textContent = D.domain + " · " + (D.run_at ? "run " + timeOf(D.run_at) : "report " + timeOf(D.built_at)) +
+  (D.run_at && timeOf(D.run_at) !== timeOf(D.built_at) ? " · report rebuilt " + timeOf(D.built_at) : "") +
+  " · " + rows.length + " suggestions judged" +
   (D.stats["Jev cost"] ? " · Jev cost " + D.stats["Jev cost"] : "") +
   (D.embeddings ? " · embeddings: " + D.embeddings + (D.stats["Embeddings cost"] ? " (" + D.stats["Embeddings cost"] + ")" : "") : "");
 if (!rows.some(r => r.si != null)) $("f-sim-wrap").hidden = true;
@@ -623,7 +629,7 @@ $("csv").addEventListener("click", () => {
   const acc = evaluate(), cols = ["source_url", "source_title", "placement", "anchor", "anchor_type", "target_url", "target_title", "score", "similarity", "context"];
   const q = x => '"' + String(x ?? "").replace(/"/g, '""') + '"';
   const lines = [cols.join(",")].concat(acc.map(r => [r.s, r.st, r.pl, r.a, r.ty, r.t, r.tt, r.sc, r.si, r.c].map(q).join(",")));
-  download("﻿" + lines.join("\n"), `links-${D.domain}.csv`, "text/csv");
+  download("﻿" + lines.join("\n"), `links-${D.domain}-${stamp()}.csv`, "text/csv");
 });
 function download(text, name, type) {
   const a = document.createElement("a");
@@ -638,7 +644,8 @@ function agentMarkdown(list) {
     `at most ${S.max} per page` + (S.val ? `, value ≥ ${S.val}%` : "") + (S.sim ? `, page similarity ≥ ${S.sim}%` : "");
   const tpath = u => { try { const x = new URL(u); return (x.pathname || "/") + x.search; } catch (e) { return u; } };
   const lines = [`# Internal links to insert - ${D.domain}`, "",
-    `${plural(list.length, "link")} on ${plural(by.size, "page")} · internal-linking ${D.version}, ${new Date().toISOString().slice(0, 10)} · ${filters}`,
+    `${plural(list.length, "link")} on ${plural(by.size, "page")} · generated ${stamp().replace(/-(\d\d)(\d\d)$/, " $1:$2")} ` +
+      `from the report of the run ${timeOf(D.run_at || D.built_at)} by internal-linking ${D.version} · ${filters}`,
     "", D.agent, "", "## Links", ""];
   for (const [s, rs] of by) {
     lines.push(`### ${tpath(s)} - ${rs[0].st || ""}`, "", `Page: ${s}`, "");
@@ -651,7 +658,7 @@ function agentMarkdown(list) {
 }
 $("md").addEventListener("click", () => {
   const acc = [...evaluate()].sort((a, b) => a.s.localeCompare(b.s) || b.sc - a.sc);
-  download(agentMarkdown(acc), `links-for-agent-${D.domain}.md`, "text/markdown");
+  download(agentMarkdown(acc), `links-for-agent-${D.domain}-${stamp()}.md`, "text/markdown");
 });
 // ---- Graph view: the whole site with force-graph (inlined above) - pages, links today, new links, similarity ----
 const G = (() => {
