@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "internal-linking"
-version = "0.3.1"
+version = "0.4.0"
 description = "Internal link suggestions for any website, judged by the Jev model via OpenRouter, with an embeddings-based link graph"
 readme = "README.md"
 license = "MIT"
@@ -28,7 +28,7 @@ internal-linking = "internal_linking.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-internal_linking = ["config.json", "vendor/*"]
+internal_linking = ["config.json", "vendor/*", "ui/*.html", "ui/*.js", "ui/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

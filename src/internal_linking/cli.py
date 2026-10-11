@@ -1,5 +1,6 @@
 """Command line: internal-linking <command> ...
 
+  internal-linking ui                               # the tool in the browser (localhost)
   internal-linking run --domain example.com
   internal-linking run --domains-file domains.txt --max-links 3
   internal-linking report --domain example.com      # rebuild report.html from saved results
@@ -15,6 +16,7 @@ import argparse
 import sys
 
 from . import __version__, crawl, embeddings, pipeline, report, verify
+from .ui import server as ui
 from .common import set_data_root
 from .jev import pairs
 from .quality import evaluate, label, sample
@@ -38,7 +40,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--data-dir", default="data", help="where results are stored (default: ./data)")
     ap.add_argument("--config", help="config file with thresholds (default: ./config.json, then built-in)")
     sub = ap.add_subparsers(dest="command", required=True)
-    for module in (pipeline, verify, report, embeddings, crawl, pairs, sample, label, evaluate):
+    for module in (pipeline, ui, verify, report, embeddings, crawl, pairs, sample, label, evaluate):
         module.add_parser(sub)
     args = ap.parse_args(argv)
     set_data_root(args.data_dir)

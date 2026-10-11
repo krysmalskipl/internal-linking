@@ -10,6 +10,11 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 
 ## Changelog
 
+### 0.4.0 - 2026-10-11
+- **Panel:** `internal-linking ui` opens a local page in the browser to run everything by clicking, on the files in `data/`: domains with their last run and how many links are inserted, run / embed / report / verify / sample / evaluate / label with options and the output live, verification results with filters, files and past runs, API keys (saved to `.env`, never shown back) and thresholds. Nothing new to install.
+- Every job started from the panel keeps its output in `data/<domain>/logs/`.
+- `verify --links latest` takes the newest `links-for-agent-<domain>-….md` from `~/Downloads`; a missing file gives a message with the link lists in that folder instead of an error trace.
+
 ### 0.3.1 - 2026-10-11
 - Timestamps: the report header shows when the run was made (and when the report was rebuilt, if later), `links-for-agent.md` when it was generated and from which run, and files downloaded from the report carry the date and time in their names (`links-for-agent-example.com-2026-10-11-1312.md`).
 - `run.json` keeps each run's time and costs, so `report`, `embed` and `verify` rebuild the report without losing the Jev cost.
@@ -63,6 +68,7 @@ Open a report with `open data/example.com/report.html` (macOS) or `start data\ex
 ## Usage
 
 ```bash
+internal-linking ui                                      # the panel in the browser (see Panel)
 internal-linking run --domain example.com
 internal-linking run --domain a.com --domain b.com       # several domains
 internal-linking run --domains-file domains.txt          # one domain per line
@@ -96,8 +102,19 @@ Jev answers (`jev_pairs.jsonl`) and page embeddings (`embeddings.jsonl`) are cac
 ## Insert and verify
 
 1. **Insert** - by hand from the report, or give `links-for-agent.md` (or the report's *For AI agent (.md)* download of your current selection) to a coding agent in the site's repository: *"Insert the links from links-for-agent.md"*. It finds each passage in the source - Markdown/MDX, `.astro`, HTML, JSX - links the exact phrase in the file's own syntax and reports what it inserted or skipped.
-2. **Verify** - `internal-linking verify --domain example.com --base-url http://localhost:4321` on a local preview, or without `--base-url` after deploying. For every link: inserted as proposed, another link text, another passage, only in the menu, missing, or a target that does not load. Results go to `verify.csv` and the report's *Verification* tab; the exit code is 1 when anything is off, so it can run in CI. It checks `links-for-agent.md` from the last run; for a file downloaded from the report, add `--links ~/Downloads/links-for-agent-example.com-….md`.
+2. **Verify** - `internal-linking verify --domain example.com --base-url http://localhost:4321` on a local preview, or without `--base-url` after deploying. For every link: inserted as proposed, another link text, another passage, only in the menu, missing, or a target that does not load. Results go to `verify.csv` and the report's *Verification* tab; the exit code is 1 when anything is off, so it can run in CI. It checks `links-for-agent.md` from the last run; for a file downloaded from the report, add `--links latest` (the newest one in `~/Downloads`) or `--links <path>`.
 3. **Repeat** - the next `run` re-crawls the site, checks the previous list the same way and proposes only what is still missing.
+
+## Panel
+
+```bash
+internal-linking ui                 # http://127.0.0.1:8770, opens in the browser
+internal-linking ui --port 8800 --no-browser
+```
+
+Everything from the command line, by clicking: add a domain, start a run with its options, watch the output live and open the report; verify the links on a local preview or the live site and filter the results; draw a labelling sample, label it and evaluate the thresholds; download any file from `data/<domain>/` and read past runs. *Settings* saves the API keys to `.env` and the thresholds to `config.json` in the folder the panel was started from. The panel runs the same commands as the terminal, one at a time per domain, and keeps their output in `data/<domain>/logs/`.
+
+It listens only on 127.0.0.1, accepts actions only from its own page, never sends a saved key back to the browser (only its last characters) and serves files only from `data/`. Stop it with Ctrl+C.
 
 ## Keyword mode
 
@@ -163,6 +180,7 @@ src/internal_linking/
 ├── report.py         # interactive report.html with the Graph and Verification views, `report` command
 ├── agent.py          # links-for-agent.md for a coding agent
 ├── verify.py         # `verify`: are the links on the site
+├── ui/               # `ui`: the panel - local server (server.py) and page (index.html, app.js, app.css)
 ├── vendor/           # force-graph (MIT), inlined into the report
 ├── config.py         # thresholds (config.json)
 ├── jev/client.py     # API client: Jev on TypeSafe or OpenRouter, POST with retries

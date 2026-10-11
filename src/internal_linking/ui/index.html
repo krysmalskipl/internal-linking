@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>internal-linking</title>
+<script>try { const t = localStorage.getItem("il-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body data-token="__TOKEN__" data-version="__VERSION__">
+<header class="top">
+  <div class="brand-wrap"><span class="brand">internal-linking<span class="dot">.</span></span><span class="muted ver">__VERSION__</span></div>
+  <div class="top-actions">
+    <button class="btn" id="open-settings">Settings</button>
+    <div class="theme" role="group" aria-label="Theme"><button data-theme-set="light">☀ Light</button><button data-theme-set="dark">☾ Dark</button></div>
+  </div>
+</header>
+<div class="shell">
+  <aside class="side">
+    <form id="new-domain" class="new-domain" autocomplete="off">
+      <input type="text" id="new-domain-input" placeholder="add a domain, e.g. example.com" aria-label="New domain">
+      <button class="btn primary" type="submit">Add</button>
+    </form>
+    <nav id="projects" aria-label="Domains"></nav>
+  </aside>
+  <main id="main"></main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script src="/app.js"></script>
+</body></html>
