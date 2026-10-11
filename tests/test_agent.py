@@ -61,3 +61,20 @@ def test_run_writes_the_agent_file(site, tmp_path, monkeypatch):
     links = agent.read_links(ddir / "links-for-agent.md")
     assert len(links) == result["links"] > 0
     assert "at most 3 per page" in (ddir / "links-for-agent.md").read_text(encoding="utf-8")
+
+
+def test_run_time_is_kept_in_the_agent_file_and_through_report_rebuilds(site, tmp_path, monkeypatch):
+    import json
+
+    from internal_linking import report
+    from internal_linking.common import shown
+    test_run_writes_the_agent_file(site, tmp_path, monkeypatch)
+    ddir = tmp_path / "data" / "example.pl"
+    run = json.loads((ddir / "run.json").read_text())
+    assert run["run_at"][:2] == "20" and run["stats"]["Jev cost"] and run["links"] > 0
+    assert f"generated {shown(run['run_at'])} by internal-linking" in (ddir / "links-for-agent.md").read_text(encoding="utf-8")
+    report.rebuild(types.SimpleNamespace(config=None, domain=["example.pl"], max_links=None))
+    html = (ddir / "report.html").read_text(encoding="utf-8")
+    data = json.loads(html.split('<script type="application/json" id="data">')[1].split("</script>")[0])
+    assert data["run_at"] == run["run_at"] and data["built_at"] >= run["run_at"]
+    assert data["stats"] == run["stats"]  # the Jev cost survives a rebuild

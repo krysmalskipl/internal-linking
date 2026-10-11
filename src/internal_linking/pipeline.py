@@ -8,6 +8,7 @@ recommendations.csv and report.html (with the link graph).
 Two modes: automatic (targets and phrases come from the pages' titles) and keyword mode
 (--keywords: only the phrases you list, see keywords.py).
 """
+import json
 import re
 import shutil
 import time
@@ -19,8 +20,8 @@ from urllib.parse import urlsplit
 from . import agent, embeddings, verify
 from . import keywords as kw
 from .anchors import NO_LINK_BLOCKS, AnchorFinder, content_words, detect_lang, text_keys, word_key
-from .common import (Progress, append_jsonl, clean_title, data_dir, is_archive, norm_url, read_jsonl, site_suffixes,
-                     write_csv)
+from .common import (Progress, append_jsonl, clean_title, data_dir, is_archive, norm_url, now, read_jsonl, shown,
+                     site_suffixes, write_csv)
 from .config import load_config
 from .crawl import BOILERPLATE_SHARE, crawl, strip_boilerplate, strip_excerpts
 from .jev import pairs
@@ -309,7 +310,8 @@ def select(rows: list[dict], cfg: dict, max_links: int) -> None:
 
 
 def process(domain: str, args, cfg: dict) -> dict:
-    print(f"\n=== {domain}")
+    run_at = now()
+    print(f"\n=== {domain} · {shown(run_at)}")
     ddir = data_dir(domain)
     started = time.monotonic()
     if not args.no_crawl:
@@ -363,8 +365,8 @@ def process(domain: str, args, cfg: dict) -> dict:
     write_csv(ddir / "recommendations.csv", rows, fields)
     write_csv(ddir / "links.csv", accepted, fields[2:])
     max_links = args.max_links or cfg["max_links_per_page"]
-    (ddir / "links-for-agent.md").write_text(agent.agent_markdown(domain, accepted, agent.thresholds(cfg, max_links)),
-                                             encoding="utf-8")
+    (ddir / "links-for-agent.md").write_text(agent.agent_markdown(domain, accepted, agent.thresholds(cfg, max_links),
+                                                                  run_at), encoding="utf-8")
     summary = None
     if resolved is not None:
         summary = keyword_summary(resolved, rows, pages)
@@ -373,6 +375,9 @@ def process(domain: str, args, cfg: dict) -> dict:
     stats = {"Jev cost": jev_cost(cost)}
     if vectors:
         stats["Embeddings cost"] = f"${emb_cost:.3f}"
+    # when the run was made and what it cost - `report`, `embed` and `verify` rebuild the report with it
+    (ddir / "run.json").write_text(json.dumps({"run_at": run_at, "version": agent.__version__, "stats": stats,
+                                               "pages": len(pages), "links": len(accepted)}, indent=2) + "\n")
     write_report(ddir / "report.html", domain, rows, cfg, max_links, stats, pages=pages, vectors=vectors)
     print(f"links to insert: {len(accepted)} on {pages_with} pages "
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")

@@ -52,7 +52,7 @@ def test_vectors_are_cut_to_the_dimensions_and_normalised():
 def test_pages_are_embedded_in_batches_of_20_and_cached(tmp_path, api):
     pages = [page(f"https://example.pl/p{i}/", f"Strona {i}", f"tekst o temacie {i}") for i in range(45)]
     vectors, cost = embeddings.embed_pages(pages, tmp_path)
-    assert [len(c["input"]) for c in api] == [20, 20, 5]
+    assert sorted(len(c["input"]) for c in api) == [5, 20, 20]  # batches go out in parallel, in any order
     assert {(c["model"], c["dimensions"]) for c in api} == {("qwen/qwen3-embedding-8b", 768)}
     assert len(vectors) == 45 and cost == pytest.approx(0.003)
     v = vectors["https://example.pl/p7/"]
@@ -199,3 +199,18 @@ def test_embed_command_embeds_saved_pages_and_rebuilds_the_report(site, tmp_path
     data = json.loads(html.split('<script type="application/json" id="data">')[1].split("</script>")[0])
     assert data["rows"] and all(r["si"] is not None for r in data["rows"])  # results saved before embeddings
     assert all("x" in n for n in data["graph"]["nodes"])
+
+
+def test_report_script_is_valid_javascript(tmp_path):
+    """A syntax error (e.g. a name declared twice) stops the whole report - check it with node."""
+    import re
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    out = tmp_path / "report.html"
+    write_report(out, "example.pl", [], load_config(), 3, pages=[page("https://example.pl/", "Start", "t")])
+    scripts = re.findall(r"<script>(.*?)</script>", out.read_text(encoding="utf-8"), re.S)
+    (tmp_path / "report.js").write_text(scripts[-1], encoding="utf-8")  # the report's own code (not the library)
+    check = subprocess.run(["node", "--check", str(tmp_path / "report.js")], capture_output=True, text=True)
+    assert check.returncode == 0, check.stderr

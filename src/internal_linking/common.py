@@ -4,6 +4,7 @@ import json
 import re
 import time
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -13,6 +14,17 @@ _data_root = Path("data")
 def set_data_root(path: str | Path) -> None:
     global _data_root
     _data_root = Path(path)
+
+
+def now() -> str:
+    """Local date and time with its UTC offset, e.g. 2026-10-11T13:05+02:00 - when a run, a report
+    or an export was made."""
+    return datetime.now().astimezone().isoformat(timespec="minutes")
+
+
+def shown(stamp: str) -> str:
+    """2026-10-11T13:05+02:00 → 2026-10-11 13:05 (the local time it was made)."""
+    return stamp[:16].replace("T", " ")
 
 
 def bare_host(host: str) -> str:

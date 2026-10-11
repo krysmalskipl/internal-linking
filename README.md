@@ -10,6 +10,10 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 
 ## Changelog
 
+### 0.3.1 - 2026-10-11
+- Timestamps: the report header shows when the run was made (and when the report was rebuilt, if later), `links-for-agent.md` when it was generated and from which run, and files downloaded from the report carry the date and time in their names (`links-for-agent-example.com-2026-10-11-1312.md`).
+- `run.json` keeps each run's time and costs, so `report`, `embed` and `verify` rebuild the report without losing the Jev cost.
+
 ### 0.3.0 - 2026-10-11
 - **Insert and verify:** `links-for-agent.md` - the links with instructions for a coding agent (Claude Code, Antigravity...) that inserts them in the site's source (Astro, MDX, HTML...); `internal-linking verify` checks the result on the live site or a local preview and fills the report's new Verification tab; each `run` checks the previous list on the fresh crawl.
 - **Fixed:** excerpts of posts on tag, category and blog index pages are no longer link sources (a listing of `<article>` cards is read whole); the labelling sample now shows the passage Jev judged; pages without a charset header are decoded by their `<meta charset>`.
@@ -83,6 +87,7 @@ Results land in `data/<domain>/` (change with `--data-dir`):
 - `report.html` - an interactive, self-contained report: every link as *where* (the paragraph with the highlighted phrase), *what* (the link text) and *where to* (the target), with copy buttons for the text, the URL and ready HTML; sliders in % for every Jev score, page similarity, links per page, match type and search change the selection live; views: *Linking to* (the new links each page will get), *Linked from* (where each target's new links come from, with its links today - orphans - no internal link at all - and pages with no or few links in content flagged), *Pages* (every page with links in and out today, new links in and out, sortable by the weakest linked), *Graph* (the whole site as an interactive graph, see below), *Verification* (which links are inserted), *Keywords* and *Rejected* (with reasons); collapsible groups; light / dark switch; CSV export of the current selection
 - `links.csv` - links to insert
 - `links-for-agent.md` - the same links with instructions for a coding agent (see below)
+- `run.json` - when the run was made and what it cost
 - `recommendations.csv` - every judged suggestion with its decision, reason and page similarity
 - `embeddings.jsonl` - one vector per page (cache)
 
@@ -91,7 +96,7 @@ Jev answers (`jev_pairs.jsonl`) and page embeddings (`embeddings.jsonl`) are cac
 ## Insert and verify
 
 1. **Insert** - by hand from the report, or give `links-for-agent.md` (or the report's *For AI agent (.md)* download of your current selection) to a coding agent in the site's repository: *"Insert the links from links-for-agent.md"*. It finds each passage in the source - Markdown/MDX, `.astro`, HTML, JSX - links the exact phrase in the file's own syntax and reports what it inserted or skipped.
-2. **Verify** - `internal-linking verify --domain example.com --base-url http://localhost:4321` on a local preview, or without `--base-url` after deploying. For every link: inserted as proposed, another link text, another passage, only in the menu, missing, or a target that does not load. Results go to `verify.csv` and the report's *Verification* tab; the exit code is 1 when anything is off, so it can run in CI.
+2. **Verify** - `internal-linking verify --domain example.com --base-url http://localhost:4321` on a local preview, or without `--base-url` after deploying. For every link: inserted as proposed, another link text, another passage, only in the menu, missing, or a target that does not load. Results go to `verify.csv` and the report's *Verification* tab; the exit code is 1 when anything is off, so it can run in CI. It checks `links-for-agent.md` from the last run; for a file downloaded from the report, add `--links ~/Downloads/links-for-agent-example.com-….md`.
 3. **Repeat** - the next `run` re-crawls the site, checks the previous list the same way and proposes only what is still missing.
 
 ## Keyword mode
