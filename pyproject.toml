@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "internal-linking"
-version = "0.2.0"
+version = "0.3.0"
 description = "Internal link suggestions for any website, judged by the Jev model via OpenRouter, with an embeddings-based link graph"
 readme = "README.md"
 license = "MIT"

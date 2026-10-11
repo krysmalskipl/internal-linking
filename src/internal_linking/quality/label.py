@@ -103,12 +103,12 @@ def snippet(text: str, anchor: str, width: int = 160) -> str:
     """Source text excerpt with the anchor phrase highlighted (HTML)."""
     if not anchor:
         return ""
-    m = re.search(re.escape(anchor), text)
+    m = re.search(re.escape(anchor), text, re.IGNORECASE)
     if not m:
         return ""
     start, end = max(0, m.start() - width), min(len(text), m.end() + width)
     before, after = text[start:m.start()], text[m.end():end]
-    return (("…" if start else "") + html.escape(before) + f"<mark>{html.escape(anchor)}</mark>"
+    return (("…" if start else "") + html.escape(before) + f"<mark>{html.escape(m.group(0))}</mark>"
             + html.escape(after) + ("…" if end < len(text) else ""))
 
 

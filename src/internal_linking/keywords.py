@@ -52,12 +52,13 @@ def _coverage(keyword_words: list[str], name_words: list[str]) -> tuple[float, f
     return hit / len(keyword_words), back / len(name_words)
 
 
-def resolve_target(keyword: str, pages: list[dict], titles: list[str], lang: str | None = None) -> int | None:
+def resolve_target(keyword: str, pages: list[dict], titles: list[str], lang: str | None = None,
+                   skip: set[int] = frozenset()) -> int | None:
     """Index of the page that best matches the keyword by title, H1 or slug; None if no page covers
-    at least half of the keyword's words."""
+    at least half of the keyword's words. Pages in skip (archives) are never picked."""
     best, best_key = None, None
     for i, p in enumerate(pages):
-        if lang and p["lang"] != lang:
+        if (lang and p["lang"] != lang) or i in skip:
             continue
         kw = content_words(keyword, p["lang"])
         slug = p["url"].rstrip("/").rsplit("/", 1)[-1].replace("-", " ")
@@ -69,8 +70,10 @@ def resolve_target(keyword: str, pages: list[dict], titles: list[str], lang: str
     return best
 
 
-def resolve(keywords: list[dict], pages: list[dict], titles: list[str]) -> tuple[list[dict], list[str]]:
-    """Attaches the target page index to every keyword; returns (resolved, warnings)."""
+def resolve(keywords: list[dict], pages: list[dict], titles: list[str],
+            skip: set[int] = frozenset()) -> tuple[list[dict], list[str]]:
+    """Attaches the target page index to every keyword; returns (resolved, warnings). A target_url
+    given in the file is used as is; an auto-picked target is never in skip (archives)."""
     by_url = {norm_url(p["url"]): i for i, p in enumerate(pages)}
     resolved, warnings = [], []
     for k in keywords:
@@ -81,7 +84,7 @@ def resolve(keywords: list[dict], pages: list[dict], titles: list[str]) -> tuple
                 continue
             resolved.append({**k, "target": j, "auto_target": False})
         else:
-            j = resolve_target(k["keyword"], pages, titles)
+            j = resolve_target(k["keyword"], pages, titles, skip=skip)
             if j is None:
                 warnings.append(f"'{k['keyword']}': no page matches it - add target_url")
                 continue

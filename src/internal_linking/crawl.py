@@ -3,9 +3,11 @@
 For every page in the sitemap: title, H1, meta description, language, the main content as text,
 typed content blocks (paragraph, list item, heading...) and internal links - in the content,
 in breadcrumbs and everywhere else (menu, footer, sidebar). Template blocks repeated across pages
-are then removed from the content (strip_boilerplate), so any theme works without configuration.
+are then removed from the content (strip_boilerplate), so any theme works without configuration,
+and so are excerpts of other pages on listings - tag, category and blog index pages (strip_excerpts).
 Respects robots.txt Disallow rules and Crawl-delay for the "internal-linking" user agent.
 """
+import re
 import time
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -26,17 +28,28 @@ BOILERPLATE = ["script", "style", "noscript", "nav", "header", "footer", "aside"
 BREADCRUMB_HINTS = ("breadcrumb", "okruszk")
 BOILERPLATE_SHARE = 0.3  # a block repeated on this share of pages (min. 3) is part of the template...
 BOILERPLATE_PAGES = 5    # ...and so is one repeated verbatim on this many pages
+EXCERPT_WORDS = 8        # a block this long that repeats another page's description or text is an excerpt
+TRUNCATED = re.compile(r"\s*(?:…|\.\.\.|\[(?:…|\.\.\.)\]|czytaj dalej|czytaj więcej|read more|continue reading)\s*$")
 
 session = requests.Session()
 session.headers["User-Agent"] = UA
 
 
+META_CHARSET = re.compile(rb"""<meta[^>]+charset=["']?\s*([\w-]+)""", re.I)
+
+
 def fetch(url: str) -> requests.Response | None:
     try:
-        return session.get(url, timeout=30)
+        r = session.get(url, timeout=30)
     except requests.RequestException as e:
         print(f"  ! {url}: {e}")
         return None
+    # without a charset in the header requests assumes Latin-1 for HTML, which garbles Polish
+    # letters: the page's own <meta charset> decides, else UTF-8
+    if "charset" not in r.headers.get("content-type", "").lower():
+        m = META_CHARSET.search(r.content[:4096])
+        r.encoding = m.group(1).decode() if m else "utf-8"
+    return r
 
 
 def load_robots(base: str) -> tuple[robotparser.RobotFileParser, list[str]]:
@@ -93,18 +106,18 @@ def meta(soup: BeautifulSoup, name: str) -> str:
 
 def main_content(soup: BeautifulSoup):
     """<main> (or <body>), unless a single <article> holds most of its text - then that <article>.
-    Avoids picking a post card from a listing as the page content."""
+    On a listing with several post cards (<article> each) no card dominates, so the whole
+    container is the content."""
     body = soup.body or soup
     main = soup.find("main")
     # some themes render an empty <main> with the article next to it
     body_len = len(body.get_text(" ", strip=True))
     container = main if main and len(main.get_text(" ", strip=True)) >= 0.3 * body_len else body
     total = len(container.get_text(" ", strip=True)) or 1
-    articles = container.find_all("article")
-    if articles:
-        best = max(articles, key=lambda a: len(a.get_text(" ", strip=True)))
-        if len(best.get_text(" ", strip=True)) >= 0.5 * total:
-            return best
+    sizes = sorted(((len(a.get_text(" ", strip=True)), n) for n, a in enumerate(container.find_all("article"))),
+                   reverse=True)
+    if sizes and sizes[0][0] >= 0.5 * total and (len(sizes) == 1 or sizes[1][0] < 0.3 * sizes[0][0]):
+        return container.find_all("article")[sizes[0][1]]
     return container
 
 
@@ -122,6 +135,12 @@ def internal_links(root, url: str, domain: str) -> set[str]:
             links.add(norm_url(href))
     links.discard(norm_url(url))
     return links
+
+
+def link_target(a, url: str, domain: str) -> str | None:
+    """Normalised internal URL an <a> points to, or None."""
+    href = urljoin(url, a.get("href") or "")
+    return norm_url(href) if href.startswith("http") and is_internal(href, domain) else None
 
 
 def extract(url: str, html: str, domain: str) -> dict:
@@ -147,13 +166,18 @@ def extract(url: str, html: str, domain: str) -> dict:
     # leaf blocks (paragraph, list item, heading...) without nested blocks
     leaves = [b for b in content.find_all(BLOCKS) if not b.find(BLOCKS)]
     raw = [clean_text(b) for b in leaves]
-    leaf_links = [sorted(internal_links(b, url, domain)) for b in leaves]
+    # a block inside a link (a whole post card wrapped in <a>) is link text itself
+    wrapping = [b.find_parent("a", href=True) for b in leaves]
+    anchors = [[[t, clean_text(a)] for a in b.find_all("a", href=True) if (t := link_target(a, url, domain))]
+               + ([[t, r]] if w is not None and (t := link_target(w, url, domain)) else [])
+               for b, w, r in zip(leaves, wrapping, raw)]
+    leaf_links = [sorted({t for t, _ in an} - {norm_url(url)}) for an in anchors]
     # existing link text and code become a separator so they are never proposed as a new anchor;
     # a separator at the end of each block keeps a phrase from spanning a heading and a paragraph
     for a in content.find_all(["a", "pre", "code"]):
         a.replace_with(f" {LINK_MARK} ")
-    blocks = [{"tag": b.name, "text": clean_text(b), "raw": r, "links": lk}
-              for b, r, lk in zip(leaves, raw, leaf_links)]
+    blocks = [{"tag": b.name, "text": LINK_MARK if w is not None else clean_text(b), "raw": r, "links": lk, "anchors": an}
+              for b, w, r, lk, an in zip(leaves, wrapping, raw, leaf_links, anchors)]
     for block in content.find_all(BLOCKS):
         block.append(f" {LINK_MARK} ")
     text_free = clean_text(content)
@@ -220,6 +244,72 @@ def strip_boilerplate(pages: list[dict], share: float = BOILERPLATE_SHARE) -> in
     return removed
 
 
+def excerpt_key(text: str) -> tuple[str, bool]:
+    """Comparison form of a text - lower case, single spaces, no trailing "…" or "read more" - and
+    whether such an ending was there (the text was cut short)."""
+    key, cut = " ".join(text.lower().split()), False
+    while m := TRUNCATED.search(key):
+        key, cut = key[:m.start()], True
+    return key.strip(" .,;:-–—"), cut
+
+
+def first_words(key: str) -> str:
+    return " ".join(key.split()[:EXCERPT_WORDS])
+
+
+def strip_excerpts(pages: list[dict], min_words: int = 150) -> int:
+    """Removes excerpts of other pages - the post previews on tag, category and blog index pages,
+    "related posts" boxes - from each page's content: they belong to the page they preview, so a
+    link added there would be added in the wrong place. A block is an excerpt of a page it links to
+    when it repeats that page's description or the start of its text and is the description itself,
+    is cut short ("…", "read more"), or sits among excerpts of other pages too; a single quote of a
+    linked page stays. A page whose content is mostly excerpts is marked as a listing (never a link
+    source). Idempotent. Returns the number of blocks removed."""
+    keys = {norm_url(p["url"]): (excerpt_key(p.get("meta", ""))[0],
+                                  " ".join(excerpt_key(b["raw"])[0] for b in p["blocks"])) for p in pages}
+    starts: dict[str, set[str]] = {}  # first words of each description and block → pages
+    for p in pages:
+        u = norm_url(p["url"])
+        for key in [keys[u][0]] + [excerpt_key(b["raw"])[0] for b in p["blocks"]]:
+            if len(key.split()) >= EXCERPT_WORDS:
+                starts.setdefault(first_words(key), set()).add(u)
+    found = {}
+    for p in pages:
+        u = norm_url(p["url"])
+        linked = set(p.get("content_links", [])) | set(p.get("other_links", [])) | set(p.get("breadcrumb_links", []))
+        hits = []  # (block, page it previews, previews it on its own)
+        for n, b in enumerate(p["blocks"]):
+            key, cut = excerpt_key(b["raw"])
+            if len(key.split()) < EXCERPT_WORDS:
+                continue
+            for q in (starts.get(first_words(key), set()) & linked) - {u}:
+                meta, text = keys[q]
+                if key == meta or (cut and (meta.startswith(key) or key in text)):
+                    hits.append((n, q, True))
+                    break
+                if key in text or key in meta:
+                    hits.append((n, q, False))
+                    break
+        if len({q for _, q, _ in hits}) >= 2:
+            found[u] = {n for n, _, _ in hits}
+        elif any(strong for _, _, strong in hits):
+            found[u] = {n for n, _, strong in hits if strong}
+    removed = 0
+    for p in pages:
+        drop = found.get(norm_url(p["url"]))
+        if not drop:
+            continue
+        total = sum(len(b["raw"].split()) for b in p["blocks"]) or 1
+        cut_words = sum(len(p["blocks"][n]["raw"].split()) for n in drop)
+        p["blocks"] = [b for n, b in enumerate(p["blocks"]) if n not in drop]
+        p["text"] = " ".join(b["raw"] for b in p["blocks"])
+        p["text_free"] = f" {LINK_MARK} ".join(b["text"] for b in p["blocks"])
+        if cut_words >= 0.5 * total or (len(drop) >= 3 and total - cut_words < min_words):
+            p["listing"] = True
+        removed += len(drop)
+    return removed
+
+
 def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[dict]:
     """Downloads the sitemap pages and writes data/<domain>/pages.jsonl."""
     base = f"https://{domain.removeprefix('https://').removeprefix('http://').strip('/')}"
@@ -258,6 +348,10 @@ def crawl(domain: str, sitemap: str | None = None, delay: float = 0.5) -> list[d
     removed = strip_boilerplate(pages)
     if removed:
         print(f"\ntemplate blocks removed from content (repeated across pages): {removed}")
+    excerpts = strip_excerpts(pages)
+    if excerpts:
+        print(f"excerpts of other pages removed from content (listings, related posts): {excerpts}, "
+              f"listing pages: {sum(bool(p.get('listing')) for p in pages)}")
     out = data_dir(domain) / "pages.jsonl"
     write_jsonl(out, pages)
     print(f"\nsaved {len(pages)} pages → {out}")
