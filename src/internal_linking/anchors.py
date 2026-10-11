@@ -10,6 +10,7 @@ at most 3 letters, so "wymianie opon zimowych" matches the target "Wymiana opon 
 Single words ("usług", "contact") are never anchors. Existing link text is replaced by a separator
 in the content blocks (see crawl.py), so a phrase never overlaps it. Headings are never used.
 """
+import os
 import re
 import unicodedata
 from collections import Counter
@@ -46,7 +47,14 @@ TITLE_SHARE = 0.1          # words in this share of titles (min. 3) are not dist
 SHARED_NAME_PAGES = 3      # a title/H1 used by this many pages is not a page name
 SENTENCE_END = (".", "!", "?", ";", ":", "…")
 PUNCT = ".,;:!?()[]\"'„”«»…"
-NO_LINK_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "th"}
+# headings, table headers, and text outside any block (FAQ toggles, copy buttons, tables built from divs -
+# joined into one run of words, so phrases span unrelated pieces; on two labelled sites it gave no good link)
+NO_LINK_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "th", "inne"}
+OPENERS = ("(", "[", "„", "“", '"', "«", "‘")    # a phrase never runs into a bracket or a quote...
+CLOSERS = (")", "]", "”", '"', "»", "’")         # ...nor past its end
+# "ChatGPT or Gemini" names two things - a partial phrase never spans a conjunction (a full page name may)
+CONJUNCTIONS = {"pl": {"i", "oraz", "lub", "albo", "czy", "ani", "a"}, "en": {"and", "or", "nor"}}
+STRONG = 5  # letters an edge word of a partial phrase shares with the target word ("blokuje" ≠ "blokad")
 
 
 @lru_cache(maxsize=500_000)
@@ -208,16 +216,22 @@ class AnchorFinder:
             f = folded[n]
             return next((k for k in by_key.get(word_key(f), ()) if same_word(vocab[k], f)), None)
 
+        def strong(n: int) -> bool:
+            """The word is the target word or a close form of it, not just a shared stem."""
+            f, v = folded[n], vocab[match(n)]
+            return f == v or len(os.path.commonprefix([f, v])) >= min(STRONG, len(f), len(v))
+
         best, best_score = None, None
         for i in range(len(tokens)):
             if is_filler(norm[i], lang) or match(i) is None:
                 continue
             hits: set[int] = set()
-            gap = 0
+            gap, conjunction = 0, False
             for j in range(i, min(i + MAX_WORDS, len(tokens))):
                 w = norm[j]
-                if not w:
+                if not w or (j > i and tokens[j].startswith(OPENERS)):
                     break
+                conjunction = conjunction or (j > i and w in CONJUNCTIONS.get(lang, ()))
                 gap = gap + 1 if is_filler(w, lang) else 0
                 if gap > MAX_GAP:
                     break
@@ -235,7 +249,9 @@ class AnchorFinder:
                     exact = bool(covered)
                     # a target's full name is specific on its own; a partial match needs a
                     # distinctive word so generic phrases are not picked up
-                    if enough and (exact or hits & distinctive) and not about_source:
+                    # a partial phrase starts and ends on the target's own words, with no conjunction
+                    clean = exact or (not conjunction and strong(i) and strong(j))
+                    if enough and (exact or hits & distinctive) and not about_source and clean:
                         # longest covered name first, then no words beyond it
                         # ("Google Search Console", not "Google Search Console using")
                         extra = len(hits - covered) if exact else 0
@@ -243,6 +259,6 @@ class AnchorFinder:
                         if best_score is None or score > best_score:
                             best = (" ".join(tokens[i:j + 1]).strip(PUNCT), "exact" if exact else "partial")
                             best_score = score
-                if tokens[j].endswith(SENTENCE_END + (",",)):
+                if tokens[j].endswith(SENTENCE_END + (",",)) or tokens[j].rstrip(".,;:!?…").endswith(CLOSERS):
                     break
         return best
