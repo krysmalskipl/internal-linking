@@ -131,25 +131,43 @@ const inputs = (p, exts) => p.inputs.filter(f => exts.some(x => f.name.endsWith(
 const upload = `<div class="row"><label class="btn" for="upload">Upload a file…</label>
   <input id="upload" type="file" accept=".csv,.txt,.md" hidden><span class="muted small">keyword lists, URL lists, link lists (.csv, .txt, .md)</span></div>`;
 
+// options most runs never change sit under Advanced; its summary counts the changed ones, so none applies unseen
+const ADVANCED = { run: ["sources", "targets", "sources_file", "targets_file", "keywords", "no_crawl", "no_embeddings", "dry_run",
+  "max_links", "delay", "workers"], verify: ["delay"], label: ["port"] };
+const opened = {};            // command → Advanced opened or closed by hand
+const changed = cmd => ADVANCED[cmd].filter(n => ![undefined, "", false].includes(((forms[current] || {})[cmd] || {})[n])).length;
+const changedText = n => n ? ` · ${n} changed` : "";
+function advanced(cmd, body) {
+  const n = changed(cmd);
+  return `<details class="advanced" data-adv="${cmd}" ${(opened[cmd] ?? n > 0) ? "open" : ""}>
+    <summary>Advanced<span class="changed" id="${cmd}-changed">${changedText(n)}</span></summary>${body}
+    <div class="row"><button class="btn" data-defaults="${cmd}">Back to defaults</button></div></details>`;
+}
+
 function runTab(el, p) {
   const crawled = p.files.some(f => f.name === "pages.jsonl"), lists = inputs(p, [".txt", ".csv"]);
   el.innerHTML = `<div class="card"><h2>Run</h2>
     <p class="muted small">Crawl the sitemap, find phrases, judge every pair with Jev and build the report. Settings and keys: <a href="#/settings">Settings</a>.</p>
     <div class="grid">
-      ${check("run", "no_crawl", "Reuse the downloaded pages", crawled ? "skip the crawl (faster; no check of the previous links)" : "no pages downloaded yet", !crawled)}
-      ${check("run", "no_embeddings", "Skip embeddings", "no similarity, no topic map")}
-      ${check("run", "dry_run", "Dry run", "count pairs and estimate the cost, no Jev calls")}
-    </div><div class="grid" style="margin-top:12px">
-      ${field("run", "max_links", "New links per page", "default from the thresholds (3)", 'type="number" min="1" max="50" placeholder="3"')}
+      ${field("run", "sitemap", "Sitemap URL", "empty: found automatically (robots.txt, /sitemap.xml…)", 'type="url" placeholder="https://…/sitemap.xml"')}
+    </div>
+    ${advanced("run", `<h3>Which pages</h3><div class="grid">
       ${field("run", "sources", "Pages that get links (regex on the path)", "e.g. ^/blog/ - empty: all", 'type="text" placeholder="^/blog/"')}
       ${field("run", "targets", "Pages links may point to (regex)", "e.g. /category/|/uslugi/", 'type="text"')}
       ${pick("run", "sources_file", "…or a list of pages that get links", "uploaded .txt/.csv, one URL or path per line", lists, "—")}
       ${pick("run", "targets_file", "…or a list of target pages", "", lists, "—")}
       ${pick("run", "keywords", "Keyword mode", "only the phrases in this file (keyword,target_url,match)", inputs(p, [".csv", ".txt"]), "off - phrases from titles")}
-      ${field("run", "sitemap", "Sitemap URL", "if robots.txt does not declare it", 'type="url" placeholder="https://…/sitemap.xml"')}
+    </div>${upload}
+    <h3>Options</h3><div class="grid">
+      ${check("run", "no_crawl", "Reuse the downloaded pages", crawled ? "skip the crawl (faster; no check of the previous links)" : "no pages downloaded yet", !crawled)}
+      ${check("run", "no_embeddings", "Skip embeddings", "no similarity, no topic map")}
+      ${check("run", "dry_run", "Dry run", "count pairs and estimate the cost, no Jev calls")}
+    </div>
+    <h3>Limits and speed</h3><div class="grid">
+      ${field("run", "max_links", "New links per page", "default from the thresholds (3)", 'type="number" min="1" max="50" placeholder="3"')}
       ${field("run", "delay", "Seconds between downloads", "default 0.5", 'type="number" step="0.1" min="0" placeholder="0.5"')}
       ${field("run", "workers", "Parallel Jev calls", "lower it on 429 errors (default 12)", 'type="number" min="1" max="64" placeholder="12"')}
-    </div>${upload}
+    </div>`)}
     <div class="row"><button class="btn primary" data-start="run">Start run</button>
       <button class="btn" data-start="report" title="rebuild report.html from saved results - no crawl, no API calls">Rebuild report</button>
       <button class="btn" data-start="embed" title="add page embeddings to saved results and rebuild the report">Add embeddings</button></div></div>
@@ -165,8 +183,9 @@ function verifyTab(el, p) {
     <div class="grid">
       ${field("verify", "base_url", "Local preview", "empty: the live site · e.g. <code>astro dev</code> on http://localhost:4321", 'type="url" placeholder="http://localhost:4321"')}
       ${pick("verify", "links", "Which links", "", [["latest", "the newest list downloaded from the report (~/Downloads)"], ...lists], "the last run's links-for-agent.md")}
-      ${field("verify", "delay", "Seconds between requests", "default 0.5", 'type="number" step="0.1" min="0" placeholder="0.5"')}
     </div>${upload}
+    ${advanced("verify", `<div class="grid">
+      ${field("verify", "delay", "Seconds between requests", "default 0.5", 'type="number" step="0.1" min="0" placeholder="0.5"')}</div>`)}
     <div class="row"><button class="btn primary" data-start="verify">Verify</button></div></div>
     <div id="job"></div><div id="results"></div>`;
   renderJob();
@@ -193,13 +212,16 @@ function quality(el) {
   const j = jobs[current], labelling = j && j.command === "label" && j.status === "running";
   el.innerHTML = `<div class="card"><h2>Measure the quality on your site</h2>
     <p class="muted small">Draw a sample of suggestions, label them Yes / No (about 15 minutes for 50), then measure each signal and tune the thresholds.</p>
-    <div class="grid">${field("sample", "n", "1. Sample size", "pairs to label", 'type="number" min="10" max="500" placeholder="50"')}</div>
+    <h3 class="step">1. Draw a sample</h3>
+    <div class="grid">${field("sample", "n", "Sample size", "pairs to label (default 50)", 'type="number" min="10" max="500" placeholder="50"')}</div>
     <div class="row"><button class="btn primary" data-start="sample">Draw a sample</button></div>
-    <div class="grid" style="margin-top:14px">${field("label", "port", "2. Labelling page port", "", 'type="number" placeholder="8765"')}</div>
+    <h3 class="step">2. Label it</h3>
     <div class="row">${labelling ? `<a class="btn primary" href="http://127.0.0.1:${esc(value("label", "port", "") || 8765)}/" target="_blank" rel="noopener">Open labelling</a>
       <button class="btn danger" data-stop>Stop labelling</button>` : '<button class="btn primary" data-start="label">Start labelling</button>'}</div>
-    <div class="grid" style="margin-top:14px">
-      ${field("evaluate", "target_precision", "3. Target precision", "share of accepted links that must be good", 'type="number" step="0.01" min="0.5" max="1" placeholder="0.9"')}
+    ${advanced("label", `<div class="grid">${field("label", "port", "Labelling page port", "default 8765", 'type="number" placeholder="8765"')}</div>`)}
+    <h3 class="step">3. Evaluate</h3>
+    <div class="grid">
+      ${field("evaluate", "target_precision", "Target precision", "share of accepted links that must be good (default 0.9)", 'type="number" step="0.01" min="0.5" max="1" placeholder="0.9"')}
       ${check("evaluate", "write_config", "Save the new thresholds", "to config.json in the working folder")}</div>
     <div class="row"><button class="btn primary" data-start="evaluate">Evaluate</button></div></div>
     <div id="job"></div>`;
@@ -284,7 +306,9 @@ const CONFIG = [["score_min", "Overall score ≥", "Jev's probability that the l
   ["context_min", "Context ≥", "the passage is about the target's topic"], ["anchor_min", "Anchor quality ≥", "the phrase is natural link text"],
   ["cannibalisation_max", "Cannibalisation <", "reject when the phrase is the source page's own topic"],
   ["similarity_min", "Page similarity ≥", "0 = off; set it after `evaluate` shows it helps"],
-  ["max_links_per_page", "New links per page", ""], ["min_words", "Minimum words on a source page", ""],
+  ["max_links_per_page", "New links per page", ""],
+  ["max_links_per_target", "New links to one page", "the best ones win when many pages name the same page · 0 = no limit"],
+  ["min_words", "Minimum words on a source page", ""],
   ["template_share", "Template phrase share", "a phrase on more than this share of pages is a template"]];
 async function renderSettings(el) {
   if (!settings) {
@@ -329,6 +353,12 @@ document.addEventListener("click", e => {
     api("POST", `/api/jobs/${jobs[current].id}/stop`, {}).then(() => poll()).catch(err => toast(err.message, true));
     return;
   }
+  if (t.dataset.defaults) {
+    const f = (forms[current] || {})[t.dataset.defaults] || {};
+    ADVANCED[t.dataset.defaults].forEach(n => delete f[n]);
+    render();
+    return;
+  }
   if (t.dataset.hide) { hidden[t.dataset.hide] = !hidden[t.dataset.hide]; renderResults(proj(current) || blank(current)); return; }
   if (t.dataset.log) {
     fetch(fileUrl(current, t.dataset.log)).then(r => r.text()).then(text => {
@@ -362,7 +392,10 @@ document.addEventListener("input", e => {
   if (!i.dataset || !i.dataset.cmd) return;
   ((forms[current] = forms[current] || {})[i.dataset.cmd] = forms[current][i.dataset.cmd] || {})[i.dataset.opt] =
     i.type === "checkbox" ? i.checked : i.value;
+  const count = $(`${i.dataset.cmd}-changed`);
+  if (count) count.textContent = changedText(changed(i.dataset.cmd));
 });
+document.addEventListener("toggle", e => { if (e.target.dataset && e.target.dataset.adv) opened[e.target.dataset.adv] = e.target.open; }, true);
 document.addEventListener("change", async e => {
   if (e.target.id !== "upload" || !e.target.files.length) return;
   const f = e.target.files[0];

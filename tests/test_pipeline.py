@@ -34,6 +34,27 @@ def test_select_applies_rules_limit_and_one_link_per_phrase():
     assert sum(r["decision"] == "accept" for r in rows) == 3
 
 
+def test_a_page_named_in_many_texts_gets_only_its_best_links():
+    # "Google Search Console" in every post: the guide gets the best 2, the rest are not used up
+    rows = [row(f"/post{i}", "google search console", "/gsc", 0.95, context=0.6 + i / 100) for i in range(6)]
+    rows.append(row("/post0", "robots.txt", "/robots", 0.92))
+    select(rows, {**CFG, "max_links_per_target": 2}, max_links=3)
+    accepted = {r["source_url"] for r in rows if r["target_url"] == "/gsc" and r["decision"] == "accept"}
+    assert accepted == {"/post5", "/post4"}                    # equal scores: the passage closer to the topic wins
+    assert sum(r["decision_reason"] == "target_limit" for r in rows) == 4
+    assert all(r["decision"] == "accept" for r in rows if r["target_url"] == "/robots")
+    select(rows, {**CFG, "max_links_per_target": 0}, max_links=3)  # 0 = no limit
+    assert all(r["decision"] == "accept" for r in rows)
+    for r in rows:
+        r["keyword"] = r["anchor"]                                      # keyword mode: your list, no limit
+    select(rows, {**CFG, "max_links_per_target": 2}, max_links=3)
+    assert all(r["decision"] == "accept" for r in rows)
+
+
+def test_the_packaged_defaults_cap_new_links_to_one_page():
+    assert load_config()["max_links_per_target"] == 5
+
+
 def test_menu_links_do_not_count_as_already_linked():
     pages = [page(f"https://example.pl/p{i}/", f"Strona {i}", "tekst", other_links=["example.pl/uslugi/"])
              for i in range(4)]

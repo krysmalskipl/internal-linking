@@ -5,6 +5,7 @@
   "cannibalisation_max": 0.7,
   "similarity_min": 0,
   "max_links_per_page": 3,
+  "max_links_per_target": 5,
   "min_words": 150,
   "template_share": 0.3,
   "archive_patterns": ["/(tag|tags|tagi|author|authors|autor|autorzy)/", "/page/\\d+/?$", "^/\\d{4}/(\\d{2}/)?$"]

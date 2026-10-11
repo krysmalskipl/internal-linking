@@ -60,7 +60,7 @@ def test_run_writes_the_agent_file(site, tmp_path, monkeypatch):
     result = pipeline.process("example.pl", args, load_config())
     links = agent.read_links(ddir / "links-for-agent.md")
     assert len(links) == result["links"] > 0
-    assert "at most 3 per page" in (ddir / "links-for-agent.md").read_text(encoding="utf-8")
+    assert "at most 3 per page, at most 5 to one page" in (ddir / "links-for-agent.md").read_text(encoding="utf-8")
 
 
 def test_run_time_is_kept_in_the_agent_file_and_through_report_rebuilds(site, tmp_path, monkeypatch):

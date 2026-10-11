@@ -41,6 +41,7 @@ def thresholds(cfg: dict, max_links: int) -> str:
     return (f"thresholds: score ≥ {round(cfg['score_min'] * 100)}%, context ≥ {round(cfg['context_min'] * 100)}%, "
             f"anchor ≥ {round(cfg['anchor_min'] * 100)}%, cannibalisation < {round(cfg['cannibalisation_max'] * 100)}%, "
             f"at most {max_links} per page"
+            + (f", at most {cfg['max_links_per_target']} to one page" if cfg.get("max_links_per_target") else "")
             + (f", page similarity ≥ {round(cfg['similarity_min'] * 100)}%" if cfg.get("similarity_min") else ""))
 
 

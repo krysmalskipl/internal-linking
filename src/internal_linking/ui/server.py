@@ -57,7 +57,7 @@ OPTIONS = {
 # config.json fields the settings page edits: name → (kind, min, max)
 CONFIG_FIELDS = {"score_min": ("float", 0, 1), "context_min": ("float", 0, 1), "anchor_min": ("float", 0, 1),
                  "cannibalisation_max": ("float", 0, 1), "similarity_min": ("float", 0, 1),
-                 "template_share": ("float", 0, 1), "max_links_per_page": ("int", 1, 50),
+                 "template_share": ("float", 0, 1), "max_links_per_page": ("int", 1, 50), "max_links_per_target": ("int", 0, 30),
                  "min_words": ("int", 0, 5000), "archive_patterns": ("regexes", 0, 0)}
 
 

@@ -293,18 +293,25 @@ def select(rows: list[dict], cfg: dict, max_links: int) -> None:
     """Sets decision (accept/reject) and decision_reason on every pair."""
     for r in rows:
         r["decision_reason"] = pairs.reject_reason(r, cfg) if "score" in r else "not_judged"
-    passing = sorted((r for r in rows if not r["decision_reason"]), key=lambda r: -r["score"])
-    # one phrase in the text carries one link; then the per-page link limit
-    used_phrases, per_page = set(), Counter()
+    passing = sorted((r for r in rows if not r["decision_reason"]),
+                     key=lambda r: (-r["score"], -r["jev_context"], -(r.get("similarity") or 0)))
+    # one phrase in the text carries one link; then the per-page limit and the per-target limit - a page
+    # named in many texts (a guide to a tool every post mentions) gets its best links, not one from each;
+    # keyword mode has none: the phrases and targets are the user's own list
+    used_phrases, per_page, per_target = set(), Counter(), Counter()
+    target_max = cfg.get("max_links_per_target") or 0
     for r in passing:
         key = (r["source_url"], r["anchor"].lower())
         if key in used_phrases:
             r["decision_reason"] = "duplicate_phrase"
         elif per_page[r["source_url"]] >= max_links:
             r["decision_reason"] = "limit"
+        elif target_max and not r.get("keyword") and per_target[r["target_url"]] >= target_max:
+            r["decision_reason"] = "target_limit"
         else:
             used_phrases.add(key)
             per_page[r["source_url"]] += 1
+            per_target[r["target_url"]] += 1
     for r in rows:
         r["decision"] = "reject" if r["decision_reason"] else "accept"
 

@@ -10,6 +10,10 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 
 ## Changelog
 
+### 0.4.1 - 2026-10-11
+- **At most 5 new links to one page** (`max_links_per_target` in `config.json`, 0 = no limit; a slider in the report). A page named in many texts - say a Google Search Console guide on an SEO blog - got a link from nearly every post with the same anchor; now it gets the best ones (score, then how closely the passage is about it), and the rest are in *Rejected* as "per-target limit". Keyword mode is not limited.
+- Panel: the *Run* form shows only the sitemap; page choice, options, limits and speed are under *Advanced*, which shows how many are changed and has *Back to defaults*. The same for the delay in *Verify* and the port in *Quality*.
+
 ### 0.4.0 - 2026-10-11
 - **Panel:** `internal-linking ui` opens a local page in the browser to run everything by clicking, on the files in `data/`: domains with their last run and how many links are inserted, run / embed / report / verify / sample / evaluate / label with options and the output live, verification results with filters, files and past runs, API keys (saved to `.env`, never shown back) and thresholds. Nothing new to install.
 - Every job started from the panel keeps its output in `data/<domain>/logs/`.
@@ -40,7 +44,7 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 - **Links on text that is already there.** Most internal linking tools suggest "related pages" and leave it to you to find a spot, or write new sentences for you. This one only proposes a link where a matching phrase already exists, so you get the paragraph, the phrase and the target - nothing to rewrite.
 - **Judged, not guessed.** Jev answers closed questions with probabilities (is the passage on topic, is the phrase a natural anchor, would the link cannibalise the source page), so decisions come from thresholds you can measure and tune instead of from reading generated prose.
 - **Cheap enough for every site.** One Jev call per pair, cached between runs - a 50-page site costs about a cent.
-- **Safe defaults.** No links from headings, no duplicates of existing links, no phrases repeated like a template, same language only, at most 3 new links per page.
+- **Safe defaults.** No links from headings, no duplicates of existing links, no phrases repeated like a template, same language only, at most 3 new links per page and 5 new links to one page.
 - **See the whole structure.** Page embeddings show how close two linked pages are in meaning, which pages are close but not linked, and how the site is linked today versus after the changes - as a graph you can click through.
 
 The default thresholds were calibrated on Polish service and blog sites; on a new kind of site (e.g. an online store) or on English pages, check a sample first (see [Thresholds and quality checks](#thresholds-and-quality-checks-optional)).
@@ -90,7 +94,7 @@ internal-linking questions --lang en                     # print the questions s
 (With the virtualenv not activated, use `.venv/bin/internal-linking`.)
 
 Results land in `data/<domain>/` (change with `--data-dir`):
-- `report.html` - an interactive, self-contained report: every link as *where* (the paragraph with the highlighted phrase), *what* (the link text) and *where to* (the target), with copy buttons for the text, the URL and ready HTML; sliders in % for every Jev score, page similarity, links per page, match type and search change the selection live; views: *Linking to* (the new links each page will get), *Linked from* (where each target's new links come from, with its links today - orphans - no internal link at all - and pages with no or few links in content flagged), *Pages* (every page with links in and out today, new links in and out, sortable by the weakest linked), *Graph* (the whole site as an interactive graph, see below), *Verification* (which links are inserted), *Keywords* and *Rejected* (with reasons); collapsible groups; light / dark switch; CSV export of the current selection
+- `report.html` - an interactive, self-contained report: every link as *where* (the paragraph with the highlighted phrase), *what* (the link text) and *where to* (the target), with copy buttons for the text, the URL and ready HTML; sliders in % for every Jev score, page similarity, links per page, links to one page, match type and search change the selection live; views: *Linking to* (the new links each page will get), *Linked from* (where each target's new links come from, with its links today - orphans - no internal link at all - and pages with no or few links in content flagged), *Pages* (every page with links in and out today, new links in and out, sortable by the weakest linked), *Graph* (the whole site as an interactive graph, see below), *Verification* (which links are inserted), *Keywords* and *Rejected* (with reasons); collapsible groups; light / dark switch; CSV export of the current selection
 - `links.csv` - links to insert
 - `links-for-agent.md` - the same links with instructions for a coding agent (see below)
 - `run.json` - when the run was made and what it cost
@@ -152,7 +156,7 @@ Every page also gets one embedding - from its title, H1, description and the sta
 3. **Rules** (`pipeline.py`) - no targets the page already links to (template links - menu, footer, sidebars, counted per language version - don't count), no target whose title or H1 is shared by several pages (e.g. the brand name as H1), same language only, no phrases repeated like a template (e.g. an author byline), a phrase that is the exact name of another page is reserved for that page; listings are never sources, and tag, author and date archives never targets (`archive_patterns` in `config.json`).
 4. **Embeddings** (`embeddings.py`) - one vector per page, cached; the similarity of the two pages goes on every pair ([details](docs/embeddings.md)).
 5. **Jev** (`jev/pairs.py`) - one call per pair, with the source page, the section heading, the passage and its neighbouring passages, and the target page; closed questions: does the paragraph discuss the target's topic, is the phrase a natural anchor, link value (0-4), cannibalisation, overall verdict with a reason code. Inspired by the Jev mode in [newsjack](https://github.com/elvisun/newsjack). Print the questions with `internal-linking questions`.
-6. **Selection** - thresholds from `config.json` (shared by all domains), one link per phrase, at most N links per page by score.
+6. **Selection** - thresholds from `config.json` (shared by all domains), one link per phrase, at most N links per page and M new links to one page (`max_links_per_target`, 5; 0 = no limit), best score first.
 7. **Report** (`report.py`) - the HTML report with the graph data (pages, links today, topic map, closest pages) built in.
 
 ## Thresholds and quality checks (optional)
