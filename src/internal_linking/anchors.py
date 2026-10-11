@@ -54,7 +54,9 @@ OPENERS = ("(", "[", "„", "“", '"', "«", "‘")    # a phrase never runs in
 CLOSERS = (")", "]", "”", '"', "»", "’")         # ...nor past its end
 # "ChatGPT or Gemini" names two things - a partial phrase never spans a conjunction (a full page name may)
 CONJUNCTIONS = {"pl": {"i", "oraz", "lub", "albo", "czy", "ani", "a"}, "en": {"and", "or", "nor"}}
-STRONG = 5  # letters an edge word of a partial phrase shares with the target word ("blokuje" ≠ "blokad")
+# an edge word of a partial phrase must be the target's own word: it shares 5 letters with it, or differs
+# only in a short ending ("linków" = "linki"), not in a longer one ("blokuje" ≠ "blokad")
+STRONG, SHORT_ENDING = 5, 2
 
 
 @lru_cache(maxsize=500_000)
@@ -219,7 +221,8 @@ class AnchorFinder:
         def strong(n: int) -> bool:
             """The word is the target word or a close form of it, not just a shared stem."""
             f, v = folded[n], vocab[match(n)]
-            return f == v or len(os.path.commonprefix([f, v])) >= min(STRONG, len(f), len(v))
+            p = len(os.path.commonprefix([f, v]))
+            return p >= min(STRONG, len(f), len(v)) or max(len(f), len(v)) - p <= SHORT_ENDING
 
         best, best_score = None, None
         for i in range(len(tokens)):

@@ -1,7 +1,7 @@
 """Benchmark: a real run replayed without network, against hand labels.
 
 A benchmark folder holds what a `run` left in data/<domain>/ - pages.jsonl and the Jev answer
-cache jev_pairs.jsonl - plus labels.csv: one row per judged pair (source_url, target_url, anchor,
+cache jev_pairs.jsonl, plain or gzipped - plus labels.csv: one row per judged pair (source_url, target_url, anchor,
 ok = 1/0, why = a short reason code for a 0). Replaying the run with the current code shows what a
 change does to the suggestions: which labelled pairs are still found, how many Jev calls a run would
 need, and how precise the links picked with the given thresholds are. Pairs whose phrase changed are
@@ -11,6 +11,8 @@ not in the answer cache; they are counted as "to judge" and their (source, targe
 """
 import argparse
 import csv
+import gzip
+import json
 import sys
 from pathlib import Path
 
@@ -22,6 +24,13 @@ from internal_linking.jev import pairs
 LEGACY = pairs.LEGACY_VERSION  # the answers were cached under jev-1.13
 
 
+def jsonl(folder: Path, name: str) -> list[dict]:
+    if (folder / name).exists():
+        return read_jsonl(folder / name)
+    with gzip.open(folder / f"{name}.gz", "rt", encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
 def labels(folder: Path) -> dict[tuple[str, str, str], tuple[bool, str]]:
     with open(folder / "labels.csv", encoding="utf-8") as f:
         return {(r["source_url"], r["target_url"], r["anchor"]): (r["ok"] == "1", r.get("why", "")) for r in csv.DictReader(f)}
@@ -29,8 +38,8 @@ def labels(folder: Path) -> dict[tuple[str, str, str], tuple[bool, str]]:
 
 def replay(folder: Path, cfg: dict) -> dict:
     """Candidates from the saved pages, Jev answers from the cache only, then the usual selection."""
-    pages = read_jsonl(folder / "pages.jsonl")
-    cache = {r["key"]: r["response"] for r in read_jsonl(folder / "jev_pairs.jsonl")}
+    pages = jsonl(folder, "pages.jsonl")
+    cache = {r["key"]: r["response"] for r in jsonl(folder, "jev_pairs.jsonl")}
     rows, _ = pipeline.find_candidates(pages, cfg)
     to_judge = 0
     for r in rows:
