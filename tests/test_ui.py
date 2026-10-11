@@ -108,6 +108,8 @@ def test_thresholds_are_checked_and_only_changes_are_saved(ui):
     assert status == 200 and s["config"]["score_min"] == 0.95 and s["config_path"] == str(ui.root / "config.json")
     assert json.loads((ui.root / "config.json").read_text()) == {"score_min": 0.95, "archive_patterns": ["/tag/"]}
     assert ui.request("POST", "/api/settings", {"config": {"score_min": 2}})[0] == 400
+    assert ui.request("POST", "/api/settings", {"config": {"max_links_per_target": 0}})[1]["config"]["max_links_per_target"] == 0
+    assert ui.request("POST", "/api/settings", {"config": {"max_links_per_target": 31}})[0] == 400
     assert ui.request("POST", "/api/settings", {"config": {"archive_patterns": ["(unclosed"]}})[0] == 400
     assert ui.request("POST", "/api/settings", {"config": {"rm -rf": 1}})[0] == 400
 

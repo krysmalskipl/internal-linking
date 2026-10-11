@@ -25,6 +25,7 @@ from .crawl import strip_boilerplate, strip_excerpts
 NUMERIC = {"score": "sc", "jev_context": "cx", "jev_anchor": "an", "jev_value": "va", "jev_cannibalisation": "ca",
            "similarity": "si"}
 GRAPH_LIB = Path(__file__).with_name("vendor") / "force-graph.min.js"
+NO_LIMIT = 31  # the "links to one page" slider's last stop
 
 
 def _num(value) -> float | None:
@@ -118,7 +119,9 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
         "defaults": {"score": round(cfg["score_min"] * 100), "ctx": round(cfg["context_min"] * 100),
                      "anc": round(cfg["anchor_min"] * 100), "val": 0,
                      "can": round(cfg["cannibalisation_max"] * 100),
-                     "sim": round(cfg.get("similarity_min", 0) * 100), "max": max_links},
+                     "sim": round(cfg.get("similarity_min", 0) * 100), "max": max_links,
+                     "maxt": min(cfg.get("max_links_per_target") or NO_LIMIT, NO_LIMIT)},
+        "no_limit": NO_LIMIT,
         "stats": stats or run.get("stats", {}),
         "embeddings": f"{model}, {dims} dimensions" if vectors else "",
         "agent": agent.guidelines(domain),
@@ -132,7 +135,8 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
     }
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     # the library first: the data goes in last, so nothing in it is ever taken for a placeholder
-    html = TEMPLATE.replace("__GRAPH_LIB__", GRAPH_LIB.read_text(encoding="utf-8")).replace("__DATA__", data)
+    html = (TEMPLATE.replace("__NO_LIMIT__", str(NO_LIMIT))
+            .replace("__GRAPH_LIB__", GRAPH_LIB.read_text(encoding="utf-8")).replace("__DATA__", data))
     path.write_text(html, encoding="utf-8")
 
 
@@ -326,6 +330,8 @@ details.tbl table { margin-top:8px } details.tbl td { font-variant-numeric:tabul
   <div class="f" id="f-sim-wrap"><label>Page similarity <span id="v-sim"></span></label><input type="range" min="0" max="100" id="f-sim">
     <small>how close the two pages are in meaning (embeddings)</small></div>
   <div class="f"><label>Links per page <span id="v-max"></span></label><input type="range" min="1" max="15" id="f-max"></div>
+  <div class="f"><label>Links to one page <span id="v-maxt"></span></label><input type="range" min="1" max="__NO_LIMIT__" id="f-maxt">
+    <small>new links to the same target - the best ones win</small></div>
   <div class="f"><label>Match type</label><select id="f-type"><option value="all">exact + partial</option>
     <option value="exact">exact only</option><option value="partial">partial only</option></select></div>
   <div class="f" id="f-lang-wrap"><label>Language</label><select id="f-lang"></select></div>
@@ -373,6 +379,7 @@ details.tbl table { margin-top:8px } details.tbl td { font-variant-numeric:tabul
 <script>
 const D = JSON.parse(document.getElementById("data").textContent);
 const rows = D.rows;
+const NO_LIMIT = D.no_limit;  // the "links to one page" slider's last stop
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const path = u => { try { return new URL(u).pathname || "/"; } catch (e) { return u; } };
@@ -381,7 +388,7 @@ const REASONS = { cannibalisation:"the phrase is the source page's own topic", o
   weak_anchor:"not natural link text", low_value:"link value below the filter", low_score:"overall score below the filter",
   low_similarity:"the two pages are far apart in meaning (embeddings)",
   too_generic:"phrase too generic", wrong_intent:"reader expects another kind of page here",
-  navigation_or_template:"list, navigation or repeated block", limit:"per-page limit - better links won",
+  navigation_or_template:"list, navigation or repeated block", limit:"per-page limit - better links won", target_limit:"per-target limit - better links to this page won",
   duplicate_phrase:"this phrase already carries a better link", not_judged:"not judged by Jev (API error)",
   filtered:"hidden by type, language, keyword or search filter" };
 const KEY = "il-filters:" + D.domain;
@@ -446,13 +453,14 @@ function evaluate() {
              (q && ![r.s, r.st, r.t, r.tt, r.a, r.c].some(x => String(x).toLowerCase().includes(q)))) why = "filtered";
     r._why = why;
   }
-  const passing = rows.filter(r => !r._why).sort((a, b) => b.sc - a.sc);
-  const used = new Set(), perPage = {};
+  const passing = rows.filter(r => !r._why).sort((a, b) => b.sc - a.sc || b.cx - a.cx || (b.si ?? 0) - (a.si ?? 0));
+  const used = new Set(), perPage = {}, perTarget = {}, maxt = S.maxt >= NO_LIMIT ? Infinity : S.maxt;
   for (const r of passing) {
     const key = r.s + "\u0000" + r.a.toLowerCase();
     if (used.has(key)) { r._why = "duplicate_phrase"; continue; }
     if ((perPage[r.s] || 0) >= S.max) { r._why = "limit"; continue; }
-    used.add(key); perPage[r.s] = (perPage[r.s] || 0) + 1;
+    if (!r.k && (perTarget[r.t] || 0) >= maxt) { r._why = "target_limit"; continue; }  // keyword mode: no limit
+    used.add(key); perPage[r.s] = (perPage[r.s] || 0) + 1; perTarget[r.t] = (perTarget[r.t] || 0) + 1;
   }
   return rows.filter(r => !r._why);
 }
@@ -597,14 +605,15 @@ function render() {
   }
 }
 function sync() {
-  for (const k of ["score", "ctx", "anc", "val", "can", "sim", "max"]) {
-    $("f-" + k).value = S[k]; $("v-" + k).textContent = k === "max" ? S[k] : (k === "can" ? "< " : "≥ ") + S[k] + "%";
+  for (const k of ["score", "ctx", "anc", "val", "can", "sim", "max", "maxt"]) {
+    $("f-" + k).value = S[k];
+    $("v-" + k).textContent = k === "maxt" ? (S[k] >= NO_LIMIT ? "no limit" : S[k]) : k === "max" ? S[k] : (k === "can" ? "< " : "≥ ") + S[k] + "%";
   }
   $("f-type").value = S.type; $("f-lang").value = S.lang; $("f-kw").value = S.kw; $("f-q").value = S.q;
   try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {}
 }
 function update() { shown = LIMIT; sync(); render(); }
-for (const k of ["score", "ctx", "anc", "val", "can", "sim", "max"]) $("f-" + k).addEventListener("input", e => { S[k] = +e.target.value; update(); });
+for (const k of ["score", "ctx", "anc", "val", "can", "sim", "max", "maxt"]) $("f-" + k).addEventListener("input", e => { S[k] = +e.target.value; update(); });
 for (const [id, k] of [["f-type", "type"], ["f-lang", "lang"], ["f-kw", "kw"]]) $(id).addEventListener("change", e => { S[k] = e.target.value; update(); });
 $("f-q").addEventListener("input", e => { S.q = e.target.value; update(); });
 $("reset").addEventListener("click", () => { S = { ...S, ...D.defaults, type:"all", lang:"all", kw:"all", q:"", hidden:{} }; update(); });
@@ -641,7 +650,7 @@ function agentMarkdown(list) {
   for (const r of list) { if (!by.has(r.s)) by.set(r.s, []); by.get(r.s).push(r); }
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
   const filters = `thresholds: score ≥ ${S.score}%, context ≥ ${S.ctx}%, anchor ≥ ${S.anc}%, cannibalisation < ${S.can}%, ` +
-    `at most ${S.max} per page` + (S.val ? `, value ≥ ${S.val}%` : "") + (S.sim ? `, page similarity ≥ ${S.sim}%` : "");
+    `at most ${S.max} per page` + (S.maxt < NO_LIMIT ? `, at most ${S.maxt} to one page` : "") + (S.val ? `, value ≥ ${S.val}%` : "") + (S.sim ? `, page similarity ≥ ${S.sim}%` : "");
   const tpath = u => { try { const x = new URL(u); return (x.pathname || "/") + x.search; } catch (e) { return u; } };
   const lines = [`# Internal links to insert - ${D.domain}`, "",
     `${plural(list.length, "link")} on ${plural(by.size, "page")} · generated ${stamp().replace(/-(\d\d)(\d\d)$/, " $1:$2")} ` +
