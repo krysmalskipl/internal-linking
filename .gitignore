@@ -13,6 +13,8 @@ __pycache__/
 data/
 *.csv
 *.jsonl
+# ...except the benchmark: a real run and its hand labels (tests/bench.py)
+!tests/benchmark/*/labels.csv
 
 # macOS
 .DS_Store

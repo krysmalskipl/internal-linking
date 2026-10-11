@@ -10,6 +10,16 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 
 ## Changelog
 
+### 0.5.1 - 2026-10-11
+- **Cleaner phrases, fewer paid calls:**
+  - a phrase never runs into a bracket or a quote ("indexing (does Google" → "indexing");
+  - a partial phrase never spans a conjunction ("ChatGPT or Gemini"); a full page name may;
+  - the first and last word of a partial phrase must be the target's own word, not just a shared stem;
+  - text outside any paragraph, list or table (FAQ toggles, copy buttons, tables built from divs) is no longer a link source.
+  
+  On a hand-labelled 63-page blog this sends 230 pairs to Jev instead of 268 (44 bad ones gone, no good one lost), precision 19/21 (was 19/22), and two good links lost to a badly cut phrase come back.
+- **Benchmark:** `tests/benchmark/` holds that real run (pages, Jev answers, every judged pair labelled by hand); a test replays it without network and fails if a change loses a good pair, lowers precision below 90% or sends more pairs to Jev. `python tests/bench.py <folder>` prints the numbers.
+
 ### 0.5.0 - 2026-10-11
 - **Clear errors:** every command ends with `! what went wrong - what to do` and exit code 1 instead of a Python trace: no results yet ("run `internal-linking run` first"), a missing file, a bad `--sources` regex, a broken `config.json`, a domain that does not answer, no sitemap, a sitemap whose pages cannot be used (with the reason: robots.txt, noindex, redirects...). `--debug` shows the trace; anything unexpected asks to be reported.
 - **No money spent on failing calls:** a bad key, no credits or a wrong model (401/402/403/404) stops the run after the first answer instead of sending every pair; Ctrl+C cancels the queued calls (answers already received stay cached); a 429 waits as long as the API asks (`Retry-After`); a malformed answer is not cached.
@@ -55,7 +65,7 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 - **Safe defaults.** No links from headings, no duplicates of existing links, no phrases repeated like a template, same language only, at most 3 new links per page and 5 new links to one page.
 - **See the whole structure.** Page embeddings show how close two linked pages are in meaning, which pages are close but not linked, and how the site is linked today versus after the changes - as a graph you can click through.
 
-The default thresholds were calibrated on Polish service and blog sites; on a new kind of site (e.g. an online store) or on English pages, check a sample first (see [Thresholds and quality checks](#thresholds-and-quality-checks-optional)).
+The default thresholds were calibrated on Polish service and blog sites and are checked on every change against a hand-labelled run (`tests/benchmark/`); on a new kind of site (e.g. an online store) or on English pages, check a sample first (see [Thresholds and quality checks](#thresholds-and-quality-checks-optional)).
 
 ## Install
 
@@ -130,7 +140,7 @@ Jev answers (`jev_pairs.jsonl`) and page embeddings (`embeddings.jsonl`) are cac
 - **A sitemap is required** (from robots.txt, `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`, or `--sitemap`); the crawler does not follow links. Sites are fetched over https.
 - **Content rendered by JavaScript is not seen** - only the HTML the server sends.
 - **No page limit.** A large site takes time to download (about 0.5 s per page); limit the work with `--sources` / `--targets` and check the cost with `--dry-run` first.
-- **Measured, not perfect.** On a hand-labelled run of a 63-page Polish SEO blog (all 268 judged pairs), 19 of the 22 links selected with the default thresholds were ones an editor would insert. Check a sample on your own site (see [Thresholds and quality checks](#thresholds-and-quality-checks-optional)).
+- **Measured, not perfect.** On hand-labelled runs of two Polish sites - a 63-page SEO blog and a 24-page beauty clinic - 9 in 10 links picked with the default thresholds were ones an editor would insert (19 of 21 and 9 of 10). English pages were not measured on a real site. Check a sample on your own site (see [Thresholds and quality checks](#thresholds-and-quality-checks-optional)).
 
 ## Insert and verify
 
@@ -220,6 +230,7 @@ src/internal_linking/
 ├── jev/pairs.py      # questions per pair, answer → columns, hard rules
 └── quality/          # sample, label, evaluate
 tests/                # pytest, no network: pip install -e ".[dev]" && pytest
+tests/benchmark/      # a real run with hand labels, replayed by tests/bench.py on every change
 ```
 
 ## Notes

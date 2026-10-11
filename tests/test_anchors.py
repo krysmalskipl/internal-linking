@@ -78,3 +78,41 @@ def test_language_is_detected_from_text_when_html_lang_is_missing():
     assert detect_lang({"lang": "", "text": "Remont łazienki warto zacząć od projektu i budżetu na płytki, "
                                             "armaturę oraz robociznę, a potem wybrać wykonawcę."}) == "pl"
     assert detect_lang({"lang": "de", "text": "Die Renovierung des Badezimmers beginnt mit der Planung."}) == ""
+
+
+# phrases cut wrong on a labelled run of a real blog - the good link was there, the phrase was not
+def test_a_phrase_stops_at_a_bracket(site):
+    finder = AnchorFinder(site)
+    found = finder.find("Poprawne indeksowanie strony (czy Google widzi podstrony) sprawdzisz w raporcie.",
+                        "Google Search Console", "Indeksowanie strony w Google", "Indeksowanie strony w Google",
+                        "https://example.pl/indeksowanie-strony-w-google/")
+    assert found == ("indeksowanie strony", "partial")
+    assert finder.find("To jest SEO (Search Engine Optimization) w praktyce.", "Strona o czymś",
+                       "Nagłówki H1 w SEO i Search", "", "https://example.pl/naglowki/") is None
+
+
+def test_a_partial_phrase_never_spans_a_conjunction(site):
+    finder = AnchorFinder(site)
+    assert finder.find("Monitoruj zapytania w narzędziach takich jak ChatGPT czy Gemini regularnie.", "AEO kontra SEO",
+                       "Pozycjonowanie w AI: ChatGPT i Gemini dla firm", "", "https://example.pl/ai-lokalne/") is None
+    # a full page name may contain one
+    found = finder.find("Robimy też remonty i wykończenia wnętrz od podstaw.", "Strona o firmie",
+                        "Remonty i wykończenia", "", "https://example.pl/remonty-i-wykonczenia/")
+    assert found == ("remonty i wykończenia", "exact")
+
+
+def test_a_partial_phrase_ends_on_the_targets_own_word_not_a_shared_stem(site):
+    finder = AnchorFinder(site)
+    found = finder.find("Plik robots.txt blokuje jedynie wejście robota na stronę.", "Indeksowanie",
+                        "Co to jest plik robots.txt? Poradnik sprawdzania blokad", "",
+                        "https://example.pl/robots-txt/")
+    assert found == ("Plik robots.txt", "partial")
+    assert finder.find("Wizyta zaczyna się od analizy skóry.", "Stymulatory tkankowe",
+                       "Zacznij od początku - pierwsza wizyta", "", "https://example.pl/pierwsza-wizyta/") is None
+
+
+def test_text_outside_blocks_is_never_a_link_source(site):
+    finder = AnchorFinder(site)
+    blocks = [{"tag": "inne", "text": "Opinie: Anna K Wymiana opon zimowych Kasia W Rekonsultacja"}]
+    assert finder.find_in_blocks(blocks, "Realizacje", "Wymiana opon zimowych", "Wymiana opon zimowych",
+                                 "https://example.pl/wymiana-opon/") is None
