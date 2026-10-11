@@ -135,7 +135,7 @@ def write_keys(new: dict) -> None:
 
 
 def settings(config: str | None) -> dict:
-    return {"keys": key_status(), "config": load_config(config), "defaults": json.loads(DEFAULT_PATH.read_text()),
+    return {"keys": key_status(), "config": load_config(config), "defaults": json.loads(DEFAULT_PATH.read_text(encoding="utf-8")),
             "config_path": str(saved_to(config)), "env_path": str(env_file()), "data_dir": str(data_root().resolve()),
             "version": __version__}
 
@@ -147,7 +147,7 @@ def saved_to(config: str | None) -> Path:
 
 def write_config(values: dict, config: str | None) -> None:
     """Checks the values and saves only what differs from the built-in defaults."""
-    defaults, cfg = json.loads(DEFAULT_PATH.read_text()), load_config(config)
+    defaults, cfg = json.loads(DEFAULT_PATH.read_text(encoding="utf-8")), load_config(config)
     for name, value in values.items():
         if name not in CONFIG_FIELDS:
             raise Problem(f"unknown setting: {name}")
@@ -175,12 +175,12 @@ def write_config(values: dict, config: str | None) -> None:
 
 def file_info(path: Path, base: Path) -> dict:
     st = path.stat()
-    return {"name": str(path.relative_to(base)), "size": st.st_size,
+    return {"name": path.relative_to(base).as_posix(), "size": st.st_size,
             "modified": datetime.fromtimestamp(st.st_mtime).astimezone().isoformat(timespec="minutes")}
 
 
 def project(d: Path, jobs: "Jobs") -> dict:
-    run = json.loads((d / "run.json").read_text()) if (d / "run.json").exists() else {}
+    run = json.loads((d / "run.json").read_text(encoding="utf-8")) if (d / "run.json").exists() else {}
     checked = verify.load(d)
     logs = sorted((d / "logs").glob("*.log"), reverse=True) if (d / "logs").is_dir() else []
     return {"domain": d.name, "run_at": run.get("run_at", ""), "links": run.get("links"), "pages": run.get("pages"),
@@ -273,7 +273,7 @@ class Job:
 
     def state(self, since: int = 0) -> dict:
         return {"id": self.id, "domain": self.domain, "command": self.command, "status": self.status, "code": self.code,
-                "started": self.started, "ended": self.ended, "log": str(self.log.relative_to(self.log.parents[1])),
+                "started": self.started, "ended": self.ended, "log": self.log.relative_to(self.log.parents[1]).as_posix(),
                 "lines": self.lines[since:], "next": len(self.lines)}
 
 

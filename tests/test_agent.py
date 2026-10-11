@@ -38,7 +38,7 @@ def test_verify_reads_back_exactly_the_links_given_to_the_agent(tmp_path):
     csv_path = tmp_path / "links.csv"
     write_csv(csv_path, ROWS, ["source_url", "source_title", "anchor", "target_url"])
     assert len(agent.read_links(csv_path)) == 3
-    (tmp_path / "notes.md").write_text("# just notes")
+    (tmp_path / "notes.md").write_text("# just notes", encoding="utf-8")
     with pytest.raises(RuntimeError, match="no ```csv block"):
         agent.read_links(tmp_path / "notes.md")
 
@@ -70,7 +70,7 @@ def test_run_time_is_kept_in_the_agent_file_and_through_report_rebuilds(site, tm
     from internal_linking.common import shown
     test_run_writes_the_agent_file(site, tmp_path, monkeypatch)
     ddir = tmp_path / "data" / "example.pl"
-    run = json.loads((ddir / "run.json").read_text())
+    run = json.loads((ddir / "run.json").read_text(encoding="utf-8"))
     assert run["run_at"][:2] == "20" and run["stats"]["Jev cost"] and run["links"] > 0
     assert f"generated {shown(run['run_at'])} by internal-linking" in (ddir / "links-for-agent.md").read_text(encoding="utf-8")
     report.rebuild(types.SimpleNamespace(config=None, domain=["example.pl"], max_links=None))

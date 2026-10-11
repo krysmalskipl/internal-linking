@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "internal-linking"
-version = "0.4.1"
+version = "0.5.0"
 description = "Internal link suggestions for any website, judged by the Jev model via OpenRouter, with an embeddings-based link graph"
 readme = "README.md"
 license = "MIT"
@@ -16,6 +16,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "scikit-learn>=1.5",
     "numpy>=1.26",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]

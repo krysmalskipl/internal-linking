@@ -48,7 +48,7 @@ def run_evaluate(tmp_path, rows) -> tuple[str, dict]:
     cfg_path = tmp_path / "cfg.json"
     evaluate.evaluate(types.SimpleNamespace(domain=["example.pl"], config=str(cfg_path), target_precision=0.9,
                                             score_floor=0.9, write_config=True))
-    return json.loads(cfg_path.read_text())
+    return json.loads(cfg_path.read_text(encoding="utf-8"))
 
 
 def test_similarity_threshold_is_set_when_it_separates_good_links(tmp_path, capsys):

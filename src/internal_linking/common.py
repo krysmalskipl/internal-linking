@@ -4,6 +4,7 @@ import json
 import re
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -107,6 +108,22 @@ def write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
+
+
+def parallel(fn, items: list, workers: int):
+    """(item, result, error) for each item as its call finishes. Leaving the loop early - Ctrl+C,
+    or the caller stopping on a bad key - cancels the calls not started yet instead of waiting for
+    the whole queue: every call to a paid API costs money."""
+    ex = ThreadPoolExecutor(max_workers=workers)
+    futures = {ex.submit(fn, item): item for item in items}
+    try:
+        for fut in as_completed(futures):
+            try:
+                yield futures[fut], fut.result(), None
+            except Exception as e:  # noqa: BLE001 - handed to the caller, which decides
+                yield futures[fut], None, e
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
 
 
 class Progress:

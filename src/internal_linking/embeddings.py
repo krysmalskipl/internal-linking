@@ -14,14 +14,15 @@ The vectors give:
   meaning), the similarity of every link today and every new link, and per page the closest pages
   it is not linked with yet.
 """
+import argparse
 import hashlib
 import os
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 import numpy as np
 
-from .common import Progress, append_jsonl, data_dir, read_jsonl
+from .common import Progress, append_jsonl, data_dir, parallel, read_jsonl
 from .jev.client import JevError, api_key, load_dotenv, post
 
 API_URL_DEFAULT = "https://openrouter.ai/api/v1/embeddings"
@@ -86,9 +87,11 @@ def embed_pages(pages: list[dict], ddir: Path, workers: int = 4,
         print(f"embedding {len(todo)} pages with {model} ({dims} dimensions, {len(texts) - len(todo)} cached)...")
         batches = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
         progress = Progress("embedded", len(todo), "pages")
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            results = ex.map(lambda batch: request([texts[k][0] for k in batch], model, dims), batches)
-            for batch, (vectors, batch_cost) in zip(batches, results):
+        with closing(parallel(lambda b: request([texts[k][0] for k in b], model, dims), batches, workers)) as results:
+            for batch, result, err in results:
+                if err is not None:
+                    raise err  # the batches not sent yet are cancelled; the ones done stay cached
+                vectors, batch_cost = result
                 for k, v in zip(batch, vectors):
                     cache[k] = [round(float(x), 5) for x in unit(v, dims)]
                     append_jsonl(cache_path, {"key": k, "url": texts[k][1], "model": model, "vector": cache[k]})
@@ -158,6 +161,7 @@ def embed_command(args) -> None:
     """`embed`: vectors for the saved pages, then the report rebuilt - no crawl, no Jev calls."""
     from . import report  # report uses this module for the graph
 
+    ready = []
     for domain in args.domain:
         ddir = data_dir(domain)
         pages = read_jsonl(ddir / "pages.jsonl")
@@ -166,7 +170,11 @@ def embed_command(args) -> None:
             continue
         vectors, _ = embed_pages(pages, ddir, args.workers)
         print(f"{domain}: {len(vectors)} of {len(pages)} pages have a vector → {ddir / 'embeddings.jsonl'}")
-    report.rebuild(args)
+        ready.append(domain)
+    if ready:
+        report.rebuild(argparse.Namespace(**{**vars(args), "domain": ready}))
+    if len(ready) < len(args.domain):
+        raise SystemExit(1)
 
 
 def add_parser(sub) -> None:

@@ -39,8 +39,10 @@ def fake_fetch(pages: dict):
     def fetch(url):
         body = pages.get(url)
         if body is None:
-            return types.SimpleNamespace(ok=False, status_code=404, text="", content=b"", url=url)
-        return types.SimpleNamespace(ok=True, status_code=200, text=body, content=body.encode(), url=url)
+            return types.SimpleNamespace(ok=False, status_code=404, text="", content=b"", url=url, headers={})
+        kind = "application/xml" if url.endswith(".xml") else "text/plain" if url.endswith(".txt") else "text/html"
+        return types.SimpleNamespace(ok=True, status_code=200, text=body, content=body.encode(), url=url,
+                                     headers={"content-type": kind})
     return fetch
 
 
@@ -54,6 +56,7 @@ def test_crawl_respects_robots_txt(tmp_path, monkeypatch):
         "https://example.pl/wpis/": HTML,
         "https://example.pl/prywatne/strona/": HTML,
     }))
+    monkeypatch.setattr(crawl_mod, "reachable", lambda base: None)
     monkeypatch.setattr(crawl_mod.time, "sleep", lambda s: None)
     set_data_root(tmp_path)
     pages = crawl_mod.crawl("example.pl")

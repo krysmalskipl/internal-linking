@@ -109,7 +109,7 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
                  stats: dict | None = None, pages: list[dict] | None = None,
                  vectors: dict[str, np.ndarray] | None = None) -> None:
     vectors = vectors or {}
-    run = json.loads((path.parent / "run.json").read_text()) if (path.parent / "run.json").exists() else {}
+    run = json.loads((path.parent / "run.json").read_text(encoding="utf-8")) if (path.parent / "run.json").exists() else {}
     embeddings.add_similarity(rows, vectors)  # also fills it in for results saved before embeddings
     model, dims = embeddings.settings()
     payload = {
@@ -143,11 +143,13 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
 def rebuild(args) -> None:
     """Rebuilds report.html from data/<domain>/recommendations.csv - no crawl, no Jev calls."""
     cfg = load_config(args.config)
+    missing = 0
     for domain in args.domain:
         ddir = data_dir(domain)
         src = ddir / "recommendations.csv"
         if not src.exists():
             print(f"! {domain}: no {src} - run `internal-linking run --domain {domain}` first")
+            missing += 1
             continue
         rows = read_csv(src)
         pages = read_jsonl(ddir / "pages.jsonl")
@@ -155,6 +157,8 @@ def rebuild(args) -> None:
         write_report(ddir / "report.html", domain, rows, cfg, args.max_links or cfg["max_links_per_page"],
                      pages=pages, vectors=vectors)
         print(f"{domain}: {len(rows)} suggestions, {len(vectors)} pages with embeddings → {ddir / 'report.html'}")
+    if missing:
+        raise SystemExit(1)
 
 
 def add_parser(sub) -> None:
