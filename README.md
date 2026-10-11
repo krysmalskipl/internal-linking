@@ -10,6 +10,11 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 
 ## Changelog
 
+### 0.3.0 - 2026-10-11
+- **Insert and verify:** `links-for-agent.md` - the links with instructions for a coding agent (Claude Code, Antigravity...) that inserts them in the site's source (Astro, MDX, HTML...); `internal-linking verify` checks the result on the live site or a local preview and fills the report's new Verification tab; each `run` checks the previous list on the fresh crawl.
+- **Fixed:** excerpts of posts on tag, category and blog index pages are no longer link sources (a listing of `<article>` cards is read whole); the labelling sample now shows the passage Jev judged; pages without a charset header are decoded by their `<meta charset>`.
+- **Changed:** tag, author and date archives are never link targets (`archive_patterns` in `config.json`; categories still are); the report tells true orphans (no internal link at all) from pages linked only from the menu; `evaluate` gives each signal's AUC with an interval, also for page similarity, and sets a similarity threshold only when it helps; the Jev version is part of the answer cache key.
+
 ### 0.2.0 - 2026-10-10
 - Page embeddings with `qwen/qwen3-embedding-8b` through OpenRouter (768 dimensions, cached) and a `similarity` score on every link, with an optional `similarity_min` threshold.
 - Graph view in the report: topic map, links today and new links, click-to-focus with similarity rings, closest unlinked pages, similarity histograms. Works offline (force-graph, MIT, inlined).
@@ -68,18 +73,26 @@ internal-linking run --domain example.com --keywords keywords.csv   # keyword mo
 internal-linking run --domain example.com --no-embeddings   # skip page embeddings (no similarity, no topic map)
 internal-linking embed --domain example.com              # embed the saved pages and rebuild the report - no crawl, no Jev calls
 internal-linking report --domain example.com             # rebuild report.html from saved results - no crawl, no API calls
+internal-linking verify --domain example.com             # are the links inserted? (see Insert and verify)
 internal-linking questions --lang en                     # print the questions sent to Jev (en / pl)
 ```
 
 (With the virtualenv not activated, use `.venv/bin/internal-linking`.)
 
 Results land in `data/<domain>/` (change with `--data-dir`):
-- `report.html` - an interactive, self-contained report: every link as *where* (the paragraph with the highlighted phrase), *what* (the link text) and *where to* (the target), with copy buttons for the text, the URL and ready HTML; sliders in % for every Jev score, page similarity, links per page, match type and search change the selection live; views: *Linking to* (the new links each page will get), *Linked from* (where each target's new links come from, with its links today - orphans and weakly linked pages flagged), *Pages* (every page with links in and out today, new links in and out, sortable by the weakest linked), *Graph* (the whole site as an interactive graph, see below), *Keywords* and *Rejected* (with reasons); collapsible groups; light / dark switch; CSV export of the current selection
+- `report.html` - an interactive, self-contained report: every link as *where* (the paragraph with the highlighted phrase), *what* (the link text) and *where to* (the target), with copy buttons for the text, the URL and ready HTML; sliders in % for every Jev score, page similarity, links per page, match type and search change the selection live; views: *Linking to* (the new links each page will get), *Linked from* (where each target's new links come from, with its links today - orphans - no internal link at all - and pages with no or few links in content flagged), *Pages* (every page with links in and out today, new links in and out, sortable by the weakest linked), *Graph* (the whole site as an interactive graph, see below), *Verification* (which links are inserted), *Keywords* and *Rejected* (with reasons); collapsible groups; light / dark switch; CSV export of the current selection
 - `links.csv` - links to insert
+- `links-for-agent.md` - the same links with instructions for a coding agent (see below)
 - `recommendations.csv` - every judged suggestion with its decision, reason and page similarity
 - `embeddings.jsonl` - one vector per page (cache)
 
 Jev answers (`jev_pairs.jsonl`) and page embeddings (`embeddings.jsonl`) are cached, so re-runs only pay for new or changed pairs and pages. Rough numbers: a 50-page site takes about a minute and about $0.01; downloading is the slow part on large sites (about 0.5 s per page), the phrase search takes seconds thanks to a word index. `--sources` / `--targets` (regexes on the URL path) and `--sources-file` / `--targets-file` (lists of URLs or paths) choose which pages get links and which pages links may point to - the whole site is still crawled, so e.g. blog posts can link to service pages. On a shop with thousands of products they also keep the number of Jev calls - and the cost - under control; check it first with `--dry-run`.
+
+## Insert and verify
+
+1. **Insert** - by hand from the report, or give `links-for-agent.md` (or the report's *For AI agent (.md)* download of your current selection) to a coding agent in the site's repository: *"Insert the links from links-for-agent.md"*. It finds each passage in the source - Markdown/MDX, `.astro`, HTML, JSX - links the exact phrase in the file's own syntax and reports what it inserted or skipped.
+2. **Verify** - `internal-linking verify --domain example.com --base-url http://localhost:4321` on a local preview, or without `--base-url` after deploying. For every link: inserted as proposed, another link text, another passage, only in the menu, missing, or a target that does not load. Results go to `verify.csv` and the report's *Verification* tab; the exit code is 1 when anything is off, so it can run in CI.
+3. **Repeat** - the next `run` re-crawls the site, checks the previous list the same way and proposes only what is still missing.
 
 ## Keyword mode
 
@@ -109,12 +122,12 @@ Every page also gets one embedding - from its title, H1, description and the sta
 
 ## How it works
 
-1. **Crawl** (`crawl.py`) - respects robots.txt (`Disallow`, `Crawl-delay`), reads the sitemap (from `robots.txt` or common locations) and, for each page, the title, H1, meta description, language, typed content blocks (paragraph, list item, heading...) and existing links (in content, breadcrumbs, elsewhere). Skips redirects, `noindex` and pages canonicalised elsewhere. Template blocks - text repeated verbatim across pages of the same language (top bars, sidebars, "areas we cover" sections, author bios) - are then removed from the content, so any theme works without configuration.
+1. **Crawl** (`crawl.py`) - respects robots.txt (`Disallow`, `Crawl-delay`), reads the sitemap (from `robots.txt` or common locations) and, for each page, the title, H1, meta description, language, typed content blocks (paragraph, list item, heading...) and existing links (in content, breadcrumbs, elsewhere). Skips redirects, `noindex` and pages canonicalised elsewhere. Template blocks - text repeated verbatim across pages of the same language (top bars, sidebars, "areas we cover" sections, author bios) - are then removed from the content, so any theme works without configuration, and so are post excerpts on listings (tag, category and blog index pages, "related posts" boxes): they belong to the posts they preview.
 2. **Phrases** (`anchors.py`) - searches paragraphs and list items (never headings) for phrases matching another page's title, H1 or slug, inflection-aware, with per-language lists of function words and title fillers:
    - `exact` - the phrase covers the target's full name,
    - `partial` - at least two words of the target's name, including a distinctive one,
    - existing link text and code are never used; no single words or generic fillers.
-3. **Rules** (`pipeline.py`) - no targets the page already links to (template links - menu, footer, sidebars, counted per language version - don't count), no target whose title or H1 is shared by several pages (e.g. the brand name as H1), same language only, no phrases repeated like a template (e.g. an author byline), a phrase that is the exact name of another page is reserved for that page.
+3. **Rules** (`pipeline.py`) - no targets the page already links to (template links - menu, footer, sidebars, counted per language version - don't count), no target whose title or H1 is shared by several pages (e.g. the brand name as H1), same language only, no phrases repeated like a template (e.g. an author byline), a phrase that is the exact name of another page is reserved for that page; listings are never sources, and tag, author and date archives never targets (`archive_patterns` in `config.json`).
 4. **Embeddings** (`embeddings.py`) - one vector per page, cached; the similarity of the two pages goes on every pair ([details](docs/embeddings.md)).
 5. **Jev** (`jev/pairs.py`) - one call per pair, with the source page, the section heading, the passage and its neighbouring passages, and the target page; closed questions: does the paragraph discuss the target's topic, is the phrase a natural anchor, link value (0-4), cannibalisation, overall verdict with a reason code. Inspired by the Jev mode in [newsjack](https://github.com/elvisun/newsjack). Print the questions with `internal-linking questions`.
 6. **Selection** - thresholds from `config.json` (shared by all domains), one link per phrase, at most N links per page by score.
@@ -130,6 +143,8 @@ internal-linking label --domain example.com       # label Yes / No in the browse
 internal-linking evaluate --domain example.com --write-config   # signal AUC and new thresholds → ./config.json
 ```
 
+`evaluate` prints each signal's AUC with a 90% interval - also for page similarity - and the precision per match type; aim for 50+ labels, a wide interval means more are needed. A similarity threshold is only set when it accepts more good links at the target precision.
+
 ## Project layout
 
 ```
@@ -140,7 +155,9 @@ src/internal_linking/
 ├── crawl.py          # sitemap, robots.txt, content blocks, existing links
 ├── anchors.py        # exact / partial phrase matching, language detection
 ├── embeddings.py     # page embeddings (Qwen3 Embedding 8B via OpenRouter), similarity, topic map, `embed` command
-├── report.py         # interactive report.html with the Graph view, `report` command
+├── report.py         # interactive report.html with the Graph and Verification views, `report` command
+├── agent.py          # links-for-agent.md for a coding agent
+├── verify.py         # `verify`: are the links on the site
 ├── vendor/           # force-graph (MIT), inlined into the report
 ├── config.py         # thresholds (config.json)
 ├── jev/client.py     # API client: Jev on TypeSafe or OpenRouter, POST with retries
@@ -151,7 +168,7 @@ tests/                # pytest, no network: pip install -e ".[dev]" && pytest
 
 ## Notes
 
-- The API client is `jev/client.py`: Jev `jev-1.13.0` on TypeSafe's `/v1/systemone` when `TYPESAFE_API_KEY` is set (`TYPESAFE_MODEL` / `TYPESAFE_API_URL` override it), otherwise `typesafe/jev-1.13` on OpenRouter's alpha decisions endpoint, which may change (`JEV_MODEL` / `JEV_API_URL`). TypeSafe's own API may not report a cost per call - the report then says "billed by TypeSafe".
+- The API client is `jev/client.py`: Jev `jev-1.13.0` on TypeSafe's `/v1/systemone` when `TYPESAFE_API_KEY` is set (`TYPESAFE_MODEL` / `TYPESAFE_API_URL` override it), otherwise `typesafe/jev-1.13` on OpenRouter's alpha decisions endpoint, which may change (`JEV_MODEL` / `JEV_API_URL`). TypeSafe's own API may not report a cost per call - the report then says "billed by TypeSafe". Keep a pinned version rather than `jev-latest`: answers are cached per version and the thresholds were set on 1.13, while the alias moves without changing its name.
 - The crawler identifies itself as `internal-linking`, respects robots.txt and waits 0.5 s between requests by default (`--delay`). Only run it on sites you own or have permission to analyse.
 
 ## License

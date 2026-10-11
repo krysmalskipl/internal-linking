@@ -245,7 +245,7 @@ mark { background:var(--mark); color:var(--mark-ink); border-radius:4px; padding
 .bar i { display:block; height:100% } .ok { background:var(--good) } .mid { background:var(--warn) } .low { background:var(--bad) }
 .rej { display:grid; grid-template-columns:1fr auto; gap:4px 12px; padding:9px 0; border-top:1px solid var(--line); font-size:14px }
 .reason { color:var(--bad); font-size:13px; white-space:nowrap } .muted { color:var(--muted) }
-.chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px } .chip { font-size:12px; background:var(--soft);
+.chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px } .chip.v.on { border-color:var(--accent); color:var(--accent) } .chip { font-size:12px; background:var(--soft);
   border:1px solid var(--line); border-radius:999px; padding:3px 10px; cursor:pointer } .chip.on { border-color:var(--bad); color:var(--bad) }
 table.kw { width:100%; border-collapse:collapse; font-size:14px } .kw th, .kw td { text-align:left; padding:8px 10px 8px 0;
   border-bottom:1px solid var(--line) } .kw th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase }
@@ -559,7 +559,7 @@ function render() {
     v.innerHTML = `<p class="muted">${D.verify.length} links checked ${esc(where)}, ${esc(D.verify[0].c.replace("T", " "))}.
         Check again after changes: <code>internal-linking verify --domain ${esc(D.domain)}</code> (add <code>--base-url</code> for a local preview).</p>
       <div class="chips">` + Object.keys(VSTATE).filter(k => counts[k]).map(k =>
-        `<span class="chip ${S.hidden[k] ? "" : "on"}" data-reason="${k}">${esc(VSTATE[k][1])} · ${counts[k]}</span>`).join("") +
+        `<span class="chip v ${S.hidden[k] ? "" : "on"}" data-reason="${k}">${esc(VSTATE[k][1])} · ${counts[k]}</span>`).join("") +
       `</div><section class="group">` + (list.length ? list.slice(0, shown * 5).map(x =>
         `<div class="rej"><div>${esc(path(x.s))} · <b>“${esc(x.a)}”</b> → <a href="${esc(x.t)}" target="_blank">${esc(path(x.t))}</a>
           ${x.f && x.st !== "ok" ? `<div class="muted" style="font-size:13px">found: “${esc(x.f)}”</div>` : ""}
