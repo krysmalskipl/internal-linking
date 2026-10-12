@@ -245,6 +245,9 @@ def well_formed(resp: dict, lang: str = "pl") -> bool:
         return False
 
 
+BY_MEANING = {"fanout", "semantic"}
+
+
 def reject_reason(row: dict, cfg: dict) -> str:
     """Hard rules on Jev answers (thresholds from config.json); empty string = the pair passes."""
     if row["jev_cannibalisation"] >= cfg["cannibalisation_max"]:
@@ -257,6 +260,10 @@ def reject_reason(row: dict, cfg: dict) -> str:
         return "low_similarity"  # the two pages are far apart in meaning (embeddings.py)
     if row["score"] < cfg["score_min"]:
         return row["jev_verdict"] if row["jev_verdict"] != "ok" else "low_score"
+    # pairs found by meaning (fanout.py) have no phrase naming the target - a stricter bar until
+    # hand labels show they earn the default one
+    if row.get("anchor_type") in BY_MEANING and row["score"] < cfg.get("meaning_score_min", 0):
+        return "low_score"
     return ""
 
 
@@ -272,15 +279,18 @@ def anchor_questions(phrases: list[str], lang: str = "pl") -> dict:
         return {"link_text": {
             "type": "choice",
             "instructions": "Which phrase from the passage is the best link text for a link to the target page? "
-                            "Prefer a phrase that matches the search query the target answers and that the reader "
-                            "would understand on its own. Choose none when no phrase announces the target.",
-            "criteria": {**options, ANCHOR_NONE: "None - no phrase announces the target page"}}}
+                            "The link text must name the target's topic - a noun phrase, not an action ('distinguish "
+                            "natural links') and not something the target does not cover - and be understandable on "
+                            "its own; prefer one matching the search query the target answers. Choose none when no "
+                            "phrase names the target's topic.",
+            "criteria": {**options, ANCHOR_NONE: "None - no phrase names the target page's topic"}}}
     return {"fraza": {
         "type": "choice",
-        "instructions": "Która fraza z fragmentu jest najlepszym tekstem linku do strony docelowej? Preferuj "
-                        "frazę zbieżną z zapytaniem, na które odpowiada cel, zrozumiałą sama w sobie. Wybierz "
-                        "none, gdy żadna fraza nie zapowiada celu.",
-        "criteria": {**options, ANCHOR_NONE: "Żadna - żadna fraza nie zapowiada strony docelowej"}}}
+        "instructions": "Która fraza z fragmentu jest najlepszym tekstem linku do strony docelowej? Tekst linku "
+                        "musi nazywać temat celu - fraza rzeczownikowa, nie czynność ('rozróżnić naturalne linki') "
+                        "i nie coś, czego cel nie rozwija - i być zrozumiały sam w sobie; preferuj frazę zbieżną z "
+                        "zapytaniem, na które odpowiada cel. Wybierz none, gdy żadna fraza nie nazywa tematu celu.",
+        "criteria": {**options, ANCHOR_NONE: "Żadna - żadna fraza nie nazywa tematu strony docelowej"}}}
 
 
 def anchor_state(src: dict, src_title: str, blocks: list[dict], b: int, target: dict, target_title: str,

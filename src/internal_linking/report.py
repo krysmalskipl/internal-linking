@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import agent, embeddings, fanout, verify
+from . import agent, broken, embeddings, fanout, verify
 from .anchors import detect_lang
 from .common import clean_title, data_dir, is_archive, norm_url, now, read_csv, read_jsonl, site_suffixes
 from .config import load_config
@@ -124,6 +124,7 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
                      "anc": round(cfg["anchor_min"] * 100), "val": 0,
                      "can": round(cfg["cannibalisation_max"] * 100),
                      "sim": round(cfg.get("similarity_min", 0) * 100), "max": max_links,
+                     "msc": round(cfg.get("meaning_score_min", 0) * 100),
                      "maxt": min(cfg.get("max_links_per_target") or NO_LIMIT, NO_LIMIT)},
         "no_limit": NO_LIMIT,
         "stats": stats or run.get("stats", {}),
@@ -137,6 +138,8 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
         "pages": page_summary(pages, cfg) if pages else {},
         "graph": link_graph(pages, vectors) if pages else {"nodes": [], "links": [], "near": []},
         "fanout": fanout.load(path.parent),
+        "broken": [{"s": b["source_url"], "st": b["source_title"], "a": b["anchor"], "u": b["broken_url"], "c": b["status"],
+                    "t": b["suggested_url"], "tt": b["suggested_title"], "x": b["context"]} for b in broken.load(path.parent)],
     }
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     # the library first: the data goes in last, so nothing in it is ever taken for a placeholder
@@ -352,6 +355,8 @@ details.tbl table { margin-top:8px } details.tbl td { font-variant-numeric:tabul
     <small>reject when the phrase is the source page's own topic</small></div>
   <div class="f" id="f-sim-wrap"><label>Page similarity <span id="v-sim"></span></label><input type="range" min="0" max="100" id="f-sim">
     <small>how close the two pages are in meaning (embeddings)</small></div>
+  <div class="f" id="f-msc-wrap"><label>Score for fan-out / semantic <span id="v-msc"></span></label><input type="range" min="0" max="100" id="f-msc">
+    <small>a stricter bar for links found by meaning</small></div>
   <div class="f"><label>Links per page <span id="v-max"></span></label><input type="range" min="1" max="15" id="f-max"></div>
   <div class="f"><label>Links to one page <span id="v-maxt"></span></label><input type="range" min="1" max="__NO_LIMIT__" id="f-maxt">
     <small>new links to the same target - the best ones win</small></div>
@@ -368,7 +373,7 @@ details.tbl table { margin-top:8px } details.tbl td { font-variant-numeric:tabul
     <button class="tab" data-view="pagelist" title="every page with its links today and after the changes">Pages</button>
     <button class="tab" data-view="graph" id="tab-graph" title="the whole site as a graph: pages, links today, new links, similarity">Graph</button>
     <button class="tab" data-view="verify" id="tab-verify" title="are the links handed out inserted? (internal-linking verify)">Verification</button>
-    <button class="tab" data-view="keywords" id="tab-kw">Keywords</button><button class="tab" data-view="fanout" id="tab-fan" title="the sub-queries of the hub pages and which page answers each (run --fanout)">Fan-out</button><button class="tab" data-view="rejected">Rejected</button>
+    <button class="tab" data-view="keywords" id="tab-kw">Keywords</button><button class="tab" data-view="fanout" id="tab-fan" title="the sub-queries of the hub pages and which page answers each (run --fanout)">Fan-out</button><button class="tab" data-view="broken" id="tab-broken" title="links in the content to pages that no longer load, with the page each was meant for">Broken links</button><button class="tab" data-view="rejected">Rejected</button>
     <div class="right"><select id="sort" class="sort" aria-label="Sort">
       <option value="count">Most new links</option><option value="weak">Weakest linked today</option><option value="az">A-Z</option></select>
       <button class="btn" id="toggle-all">Expand all</button><button class="btn" id="md" title="the selected links with instructions for a coding agent (Claude Code, Antigravity...) that inserts them in the site's source; `internal-linking verify` checks the result">For AI agent (.md)</button><button class="btn primary" id="csv">Download CSV</button></div></div>
@@ -418,7 +423,7 @@ const langs = [...new Set(rows.map(r => r.l).filter(Boolean))];
 const keywords = [...new Set(rows.map(r => r.k).filter(Boolean))].sort();
 let S = { ...D.defaults, type:"all", lang:"all", kw:"all", q:"", view:"out", sort:"count", hidden:{} };
 try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) {}
-if (!["out", "in", "pagelist", "graph", "verify", "keywords", "fanout", "rejected"].includes(S.view)) S.view = S.view === "targets" ? "in" : "out";
+if (!["out", "in", "pagelist", "graph", "verify", "keywords", "fanout", "broken", "rejected"].includes(S.view)) S.view = S.view === "targets" ? "in" : "out";
 const inbound = u => (D.pages[u] || {}).in;
 // how a page is linked today: "orphan" - no internal link at all (only the sitemap knows it);
 // "none" - no links in other pages' content, only menu, footer or breadcrumbs; "weak" - 1-2 in content
@@ -450,6 +455,8 @@ $("sub").textContent = D.domain + " · " + (D.run_at ? "run " + timeOf(D.run_at)
 if (!rows.some(r => r.si != null)) $("f-sim-wrap").hidden = true;
 if (!(D.graph && D.graph.nodes.length)) { $("tab-graph").hidden = true; if (S.view === "graph") S.view = "out"; }
 if (!D.verify.length) { $("tab-verify").hidden = true; if (S.view === "verify") S.view = "out"; }
+const BROKEN = D.broken || [];
+if (!BROKEN.length) { $("tab-broken").hidden = true; if (S.view === "broken") S.view = "out"; }
 const FAN = D.fanout && D.fanout.rows.length ? D.fanout : null;
 if (!FAN) { $("tab-fan").hidden = true; if (S.view === "fanout") S.view = "out"; }
 // match types: by name (exact, partial) and by meaning (fanout, semantic - see README, Fan-out)
@@ -457,6 +464,8 @@ const TYPES = { exact: "exact", partial: "partial", fanout: "fan-out (by sub-que
 const types = Object.keys(TYPES).filter(t => rows.some(r => r.ty === t));
 $("f-type").innerHTML = '<option value="all">all types</option>' + types.map(t => `<option value="${t}">${esc(TYPES[t])} only</option>`).join("");
 if (S.type !== "all" && !types.includes(S.type)) S.type = "all";
+if (!rows.some(r => r.ty === "fanout" || r.ty === "semantic")) $("f-msc-wrap").hidden = true;
+if (S.msc == null) S.msc = D.defaults.msc;  // filters saved by 0.6.0 have no such slider
 // verify.py statuses: class of the badge, label (icon + words, never colour alone)
 const VSTATE = { ok: ["new", "✓ inserted"], other_text: ["weak", "! other link text"], other_place: ["weak", "! other passage"],
   outside_content: ["weak", "! menu or footer only"], missing: ["orphan", "✗ not linked yet"],
@@ -477,6 +486,7 @@ function evaluate() {
     else if (r.va * 100 < S.val) why = "low_value";
     else if (r.si != null && r.si * 100 < S.sim) why = "low_similarity";
     else if (r.sc * 100 < S.score) why = r.v && r.v !== "ok" ? r.v : "low_score";
+    else if ((r.ty === "fanout" || r.ty === "semantic") && r.sc * 100 < S.msc) why = "low_score";
     else if ((S.type !== "all" && r.ty !== S.type) || (S.lang !== "all" && r.l !== S.lang) ||
              (S.kw !== "all" && r.k !== S.kw) ||
              (q && ![r.s, r.st, r.t, r.tt, r.a, r.c].some(x => String(x).toLowerCase().includes(q)))) why = "filtered";
@@ -612,6 +622,15 @@ function render() {
       (list.length > shown * 5 ? `<div class="more"><button class="btn" id="more">Show more (${list.length - shown * 5} left)</button></div>` : "");
   } else if (S.view === "fanout") {
     v.innerHTML = fanoutView(acc);
+  } else if (S.view === "broken") {
+    v.innerHTML = `<p class="muted">${BROKEN.length} link${BROKEN.length > 1 ? "s" : ""} in the content point${BROKEN.length > 1 ? "" : "s"} to an address that no longer loads.
+      Repair the address - keep the link text; the fixes are also in <i>For AI agent (.md)</i> from <code>run</code>. No new link is proposed for the same pair.</p>` +
+      BROKEN.map(b => `<section class="group"><div class="steps">
+        <div class="k">On page</div><div><a href="${esc(b.s)}" target="_blank">${esc(b.st || path(b.s))}</a> <span class="url">${esc(path(b.s))}</span></div>
+        <div class="k">In the text</div><div class="ctx">${highlight(b.x || "", b.a)}</div>
+        <div class="k">Points to</div><div><span class="url">${esc(b.u)}</span> <span class="badge orphan">${esc(b.c)}</span></div>
+        <div class="k">Change to</div><div>${b.t ? `<a href="${esc(b.t)}" target="_blank">${esc(b.tt || path(b.t))}</a> <span class="url">${esc(path(b.t))}</span>` : '<span class="muted">no matching page found</span>'}</div></div>
+        ${b.t ? `<div class="actions"><button class="btn" data-copy="${esc(path(b.t))}">Copy new address</button></div>` : ""}</section>`).join("");
   } else if (S.view === "keywords") {
     const kws = groups(rows.filter(r => r.k), "k");
     v.innerHTML = `<section class="group"><table class="kw"><tr><th>Keyword</th><th>Target</th><th>Found on</th><th>Links</th><th>Main reject reasons</th></tr>` +
@@ -678,7 +697,7 @@ function fanoutView(acc) {
 }
 $("view").addEventListener("change", e => { const f = e.target.dataset.f; if (f) { F[f] = e.target.value; shown = LIMIT; render(); } });
 function sync() {
-  for (const k of ["score", "ctx", "anc", "val", "can", "sim", "max", "maxt"]) {
+  for (const k of ["score", "ctx", "anc", "val", "can", "sim", "msc", "max", "maxt"]) {
     $("f-" + k).value = S[k];
     $("v-" + k).textContent = k === "maxt" ? (S[k] >= NO_LIMIT ? "no limit" : S[k]) : k === "max" ? S[k] : (k === "can" ? "< " : "≥ ") + S[k] + "%";
   }
@@ -686,7 +705,7 @@ function sync() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {}
 }
 function update() { shown = LIMIT; sync(); render(); }
-for (const k of ["score", "ctx", "anc", "val", "can", "sim", "max", "maxt"]) $("f-" + k).addEventListener("input", e => { S[k] = +e.target.value; update(); });
+for (const k of ["score", "ctx", "anc", "val", "can", "sim", "msc", "max", "maxt"]) $("f-" + k).addEventListener("input", e => { S[k] = +e.target.value; update(); });
 for (const [id, k] of [["f-type", "type"], ["f-lang", "lang"], ["f-kw", "kw"]]) $(id).addEventListener("change", e => { S[k] = e.target.value; update(); });
 $("f-q").addEventListener("input", e => { S.q = e.target.value; update(); });
 $("reset").addEventListener("click", () => { S = { ...S, ...D.defaults, type:"all", lang:"all", kw:"all", q:"", hidden:{} }; update(); });

@@ -18,7 +18,7 @@ from contextlib import closing
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import agent, embeddings, fanout, verify
+from . import agent, broken, embeddings, fanout, verify
 from . import keywords as kw
 from .anchors import NO_LINK_BLOCKS, AnchorFinder, content_words, detect_lang, text_keys, word_key
 from .common import (Progress, append_jsonl, clean_title, data_dir, is_archive, norm_url, now, parallel, read_jsonl,
@@ -361,6 +361,17 @@ def process(domain: str, args, cfg: dict) -> dict:
     print(f"pages: {len(pages)}, " + ", ".join(f"{k}: {v}" for k, v in info.items())
           + f", pairs with a phrase: {len(rows)}")
     by_meaning = getattr(args, "fanout", False) or getattr(args, "semantic", False)
+    broken_links = []
+    if not args.dry_run and not getattr(args, "no_link_check", False):
+        broken_links = broken.find(prepare(pages, cfg), ddir, args.delay)
+    # a broken link meant for a page is repaired, not doubled by a new link to it
+    repair = {(b["source_url"], b["suggested_url"]) for b in broken_links if b["suggested_url"]}
+    if repair:
+        kept = [r for r in rows if (r["source_url"], r["target_url"]) not in repair]
+        print(f"broken links: {len(broken_links)} (pairs left out - repair the link instead: {len(rows) - len(kept)})")
+        rows = kept
+    elif broken_links:
+        print(f"broken links: {len(broken_links)}")
     if args.dry_run:
         cache = {r["key"] for r in read_jsonl(ddir / "jev_pairs.jsonl")}
         version = jev_version()
@@ -387,7 +398,7 @@ def process(domain: str, args, cfg: dict) -> dict:
     fan, fan_cost = None, 0.0
     if by_meaning:
         extra, fan, fan_cost = fanout.run(pages, cfg, args, ddir, domain,
-                                          {(r["source_url"], r["target_url"]) for r in rows})
+                                          {(r["source_url"], r["target_url"]) for r in rows} | repair)
         rows += extra
     embeddings.add_similarity(rows, vectors)
     cost = judge(rows, ddir, args.workers) if rows else 0.0
@@ -396,8 +407,10 @@ def process(domain: str, args, cfg: dict) -> dict:
     rejected = [r for r in rows if r["decision"] == "reject"]
 
     rows.sort(key=lambda r: (r["decision"] != "accept", r["source_url"], -r.get("score", 0)))
-    for name in ("fanout.json", "fanout.csv", "fanout_gaps.csv"):  # a run without --fanout leaves no stale results
+    for name in ("fanout.json", "fanout.csv", "fanout_gaps.csv", "broken_links.csv"):  # no stale results
         (ddir / name).unlink(missing_ok=True)
+    if broken_links:
+        broken.write(ddir, broken_links)
     if fan and fan["items"]:
         fanout.write_results(ddir, fan, rows)
     fields = FIELDS + (["keyword"] if resolved is not None else [])
@@ -405,7 +418,7 @@ def process(domain: str, args, cfg: dict) -> dict:
     write_csv(ddir / "links.csv", accepted, fields[2:])
     max_links = args.max_links or cfg["max_links_per_page"]
     (ddir / "links-for-agent.md").write_text(agent.agent_markdown(domain, accepted, agent.thresholds(cfg, max_links),
-                                                                  run_at), encoding="utf-8")
+                                                                  run_at, broken_links), encoding="utf-8")
     summary = None
     if resolved is not None:
         summary = keyword_summary(resolved, rows, pages)
@@ -418,12 +431,15 @@ def process(domain: str, args, cfg: dict) -> dict:
         stats["Fan-out cost"] = f"${fan_cost:.3f}"
     # when the run was made and what it cost - `report`, `embed` and `verify` rebuild the report with it
     (ddir / "run.json").write_text(json.dumps({"run_at": run_at, "version": agent.__version__, "stats": stats,
-                                               "pages": len(pages), "links": len(accepted)}, indent=2) + "\n", encoding="utf-8")
+                                               "pages": len(pages), "links": len(accepted), "broken": len(broken_links)},
+                                              indent=2) + "\n", encoding="utf-8")
     write_report(ddir / "report.html", domain, rows, cfg, max_links, stats, pages=pages, vectors=vectors)
     print(f"links to insert: {len(accepted)} on {pages_with} pages "
           f"(rejected: {dict(Counter(r['decision_reason'] for r in rejected))})")
     print(f"done in {time.monotonic() - started:.0f} s")
     print(f"→ {ddir / 'report.html'}\n→ {ddir / 'links.csv'}\n→ {ddir / 'links-for-agent.md'} (for a coding agent)")
+    if broken_links:
+        print(f"→ {ddir / 'broken_links.csv'} (links to repair - also in links-for-agent.md)")
     if fan and fan["items"]:
         print(f"→ {ddir / 'fanout.csv'} (every sub-query)\n→ {ddir / 'fanout_gaps.csv'} (content gaps)")
     return {"domain": domain, "links": len(accepted), "pages": pages_with, "cost": round(cost + emb_cost + fan_cost, 4)}
@@ -504,6 +520,8 @@ def add_parser(sub) -> None:
                    help="skip page embeddings (no similarity, no topic map in the graph)")
     p.add_argument("--sitemap", help="sitemap URL (single domain only)")
     p.add_argument("--delay", type=float, default=0.5, help="seconds between page downloads")
+    p.add_argument("--no-link-check", action="store_true",
+                   help="do not check links in the content to pages outside the crawl (broken links)")
     p.add_argument("--workers", type=int, default=12, help="parallel Jev calls (lower it on 429 errors)")
     f = p.add_argument_group("fan-out and semantic phrases (see README, Fan-out)")
     f.add_argument("--fanout", action="store_true",

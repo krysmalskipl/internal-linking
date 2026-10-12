@@ -50,9 +50,10 @@ def target_path(url: str) -> str:
     return (p.path or "/") + (f"?{p.query}" if p.query else "")
 
 
-def agent_markdown(domain: str, rows: list[dict], summary: str = "", generated: str | None = None) -> str:
+def agent_markdown(domain: str, rows: list[dict], summary: str = "", generated: str | None = None,
+                   broken: list[dict] | None = None) -> str:
     """The .md for a coding agent: header (with when it was generated), instructions, links grouped
-    by source page, CSV block."""
+    by source page, broken links to repair (broken.py), CSV block."""
     by_source: dict[str, list[dict]] = {}
     for r in rows:
         by_source.setdefault(r["source_url"], []).append(r)
@@ -65,6 +66,16 @@ def agent_markdown(domain: str, rows: list[dict], summary: str = "", generated: 
         for n, r in enumerate(links, 1):
             lines += [f"{n}. Link text: `{r['anchor']}` → `{target_path(r['target_url'])}` - {r.get('target_title', '')}",
                       f"   > {' '.join(str(r.get('context', '')).split())}", ""]
+    if broken:
+        lines += ["## Broken links to repair", "",
+                  "These links already exist but point to an address that no longer loads (404 or 410). Change only "
+                  "the address to the one given - keep the link text - and skip a link whose page you are not sure "
+                  "about (no suggested address).", ""]
+        for n, b in enumerate(broken, 1):
+            fix = (f"→ change to `{target_path(b['suggested_url'])}` - {b.get('suggested_title', '')}"
+                   if b.get("suggested_url") else "→ no matching page found - leave it and report it")
+            lines += [f"{n}. On {b['source_url']}: link text `{b['anchor']}` points to `{target_path(b['broken_url'])}` "
+                      f"({b['status']}) {fix}", f"   > {' '.join(str(b.get('context', '')).split())}", ""]
     out = io.StringIO()
     w = csv.DictWriter(out, fieldnames=VERIFY_FIELDS, extrasaction="ignore", lineterminator="\n")
     w.writeheader()

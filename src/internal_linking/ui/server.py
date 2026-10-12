@@ -47,7 +47,7 @@ OPTIONS = {
             "targets": ("--targets", "regex"), "sources_file": ("--sources-file", "input"),
             "targets_file": ("--targets-file", "input"), "keywords": ("--keywords", "input"),
             "sitemap": ("--sitemap", "url"), "delay": ("--delay", "float"), "workers": ("--workers", "int"),
-            "fanout": ("--fanout", "flag"), "semantic": ("--semantic", "flag"), "gsc": ("--gsc", "input"),
+            "no_link_check": ("--no-link-check", "flag"), "fanout": ("--fanout", "flag"), "semantic": ("--semantic", "flag"), "gsc": ("--gsc", "input"),
             "fanout_pages": ("--fanout-pages", "regex"), "fanout_pages_file": ("--fanout-pages-file", "input"),
             "fanout_max": ("--fanout-max", "int")},
     "embed": {"workers": ("--workers", "int")},
@@ -62,7 +62,8 @@ CONFIG_FIELDS = {"score_min": ("float", 0, 1), "context_min": ("float", 0, 1), "
                  "cannibalisation_max": ("float", 0, 1), "similarity_min": ("float", 0, 1),
                  "template_share": ("float", 0, 1), "max_links_per_page": ("int", 1, 50), "max_links_per_target": ("int", 0, 30),
                  "min_words": ("int", 0, 5000), "archive_patterns": ("regexes", 0, 0),
-                 "fanout_answer_min": ("float", 0, 1), "fanout_merge_min": ("float", 0, 1), "semantic_min": ("float", 0, 1)}
+                 "fanout_answer_min": ("float", 0, 1), "fanout_merge_min": ("float", 0, 1), "semantic_min": ("float", 0, 1),
+                 "meaning_score_min": ("float", 0, 1)}
 MATCH_TYPES = {"exact", "partial", "fanout", "semantic"}
 
 
@@ -189,6 +190,7 @@ def project(d: Path, jobs: "Jobs") -> dict:
     checked = verify.load(d)
     logs = sorted((d / "logs").glob("*.log"), reverse=True) if (d / "logs").is_dir() else []
     return {"domain": d.name, "run_at": run.get("run_at", ""), "links": run.get("links"), "pages": run.get("pages"),
+            "broken": run.get("broken"),
             "stats": run.get("stats", {}),
             "verified": {"ok": sum(r["status"] == "ok" for r in checked), "total": len(checked),
                          "checked": checked[0].get("checked", "") if checked else "", "where": checked[0].get("where", "") if checked else "",

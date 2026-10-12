@@ -78,7 +78,8 @@ def passes(r: dict, cfg: dict) -> bool:
     return (float(r["score"]) >= cfg["score_min"] and float(r["jev_context"]) >= cfg["context_min"]
             and float(r["jev_anchor"]) >= cfg["anchor_min"]
             and float(r["jev_cannibalisation"]) < cfg["cannibalisation_max"]
-            and (similarity is None or similarity >= cfg.get("similarity_min", 0)))
+            and (similarity is None or similarity >= cfg.get("similarity_min", 0))
+            and (r.get("anchor_type") not in BY_MEANING or float(r["score"]) >= cfg.get("meaning_score_min", 0)))
 
 
 def auc_table(labelled: list[tuple[dict, bool]], signals: list[str]) -> None:
