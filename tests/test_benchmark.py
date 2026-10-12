@@ -26,3 +26,15 @@ def test_suggestions_on_a_labelled_site(folder):
     assert not result["lost_good"], f"good pairs no longer found: {result['lost_good']}"
     assert result["precision"] >= expected.get("min_precision", 0.9), result
     assert result["pairs"] <= expected.get("max_pairs", result["pairs"]), result
+
+
+@pytest.mark.parametrize("folder", [f for f in FOLDERS if (f / "meaning_candidates.jsonl.gz").exists()], ids=lambda p: p.name)
+def test_fanout_and_semantic_links_on_a_labelled_site(folder):
+    """Fan-out and semantic pairs from a real run: every pair labelled good still reaches Jev with
+    a link text, the picked links stay precise, none needs an answer that is not cached."""
+    expected = json.loads((folder / "expected.json").read_text(encoding="utf-8"))
+    result = bench.replay_meaning(folder, load_config())
+    assert not result["lost_good"], f"good pairs no longer judged: {result['lost_good']}"
+    assert result["to_judge"] == 0, f"the phrases changed - {result['to_judge']} Jev answers missing: run the calibration again"
+    assert result["precision"] is not None and result["precision"] >= expected["meaning_min_precision"], result
+    assert result["accepted_good"] >= expected["meaning_min_good"], result

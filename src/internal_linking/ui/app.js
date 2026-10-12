@@ -102,6 +102,7 @@ function overview(el, p) {
       <div class="stat"><b>${p.pages ?? "–"}</b><span>pages crawled</span></div>
       <div class="stat"><b>${esc(s["Jev cost"] || "–")}</b><span>Jev cost</span></div>
       <div class="stat"><b>${esc(s["Embeddings cost"] || "–")}</b><span>embeddings cost</span></div>
+      ${p.broken ? `<div class="stat"><b>${p.broken}</b><span>broken links to repair (report, links-for-agent.md)</span></div>` : ""}
       ${s["Fan-out cost"] ? `<div class="stat"><b>${esc(s["Fan-out cost"])}</b><span>fan-out cost</span></div>` : ""}
       <div class="stat"><b>${v.total ? `${v.ok} / ${v.total}` : "–"}</b><span>inserted (verified)</span></div></div>
     <div class="card"><h2>Next steps</h2><ol class="steps">
@@ -134,7 +135,7 @@ const upload = `<div class="row"><label class="btn" for="upload">Upload a file�
 
 // options most runs never change sit under Advanced; its summary counts the changed ones, so none applies unseen
 const ADVANCED = { run: ["sources", "targets", "sources_file", "targets_file", "keywords", "no_crawl", "no_embeddings", "dry_run",
-  "fanout", "semantic", "gsc", "fanout_pages", "fanout_pages_file", "fanout_max", "max_links", "delay", "workers"],
+  "no_link_check", "fanout", "semantic", "gsc", "fanout_pages", "fanout_pages_file", "fanout_max", "max_links", "delay", "workers"],
   verify: ["delay"], label: ["port"] };
 const opened = {};            // command → Advanced opened or closed by hand
 const changed = cmd => ADVANCED[cmd].filter(n => ![undefined, "", false].includes(((forms[current] || {})[cmd] || {})[n])).length;
@@ -164,6 +165,7 @@ function runTab(el, p) {
       ${check("run", "no_crawl", "Reuse the downloaded pages", crawled ? "skip the crawl (faster; no check of the previous links)" : "no pages downloaded yet", !crawled)}
       ${check("run", "no_embeddings", "Skip embeddings", "no similarity, no topic map")}
       ${check("run", "dry_run", "Dry run", "count pairs and estimate the cost, no Jev calls")}
+      ${check("run", "no_link_check", "Skip the broken-link check", "links in the content to pages outside the crawl are not requested")}
     </div>
     <h3>Fan-out and semantic phrases</h3>
     <p class="muted small">Links where the text answers a question instead of naming the page. Paid: one model call per hub
@@ -372,6 +374,7 @@ const CONFIG = [["score_min", "Overall score ≥", "Jev's probability that the l
   ["fanout_answer_min", "Fan-out: a passage answers ≥", "how close a paragraph must be to a sub-query to count as its answer"],
   ["fanout_merge_min", "Fan-out: merge queries ≥", "a generated sub-query this close to a Search Console query is merged into it"],
   ["semantic_min", "Semantic phrases ≥", "how close a paragraph must be to a page's name to propose a link"],
+  ["meaning_score_min", "Overall score for fan-out / semantic ≥", "a stricter bar for links found by meaning, until your labels show they need none"],
   ["context_min", "Context ≥", "the passage is about the target's topic"], ["anchor_min", "Anchor quality ≥", "the phrase is natural link text"],
   ["cannibalisation_max", "Cannibalisation <", "reject when the phrase is the source page's own topic"],
   ["similarity_min", "Page similarity ≥", "0 = off; set it after `evaluate` shows it helps"],

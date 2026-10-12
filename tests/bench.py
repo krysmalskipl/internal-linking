@@ -71,6 +71,56 @@ def replay(folder: Path, cfg: dict) -> dict:
     }
 
 
+def replay_meaning(folder: Path, cfg: dict) -> dict | None:
+    """Fan-out and semantic pairs: the candidates a run found (meaning_candidates.jsonl - which
+    passage, which target, the sub-query; finding them again would need every paragraph's embedding),
+    then the current code from there - the phrases offered, Jev's link-text choice and judgement from
+    the caches, the thresholds. labels_meaning.csv holds a hand label per (source, target) pair."""
+    if not (folder / "meaning_candidates.jsonl.gz").exists():
+        return None
+    from internal_linking import fanout, passages
+
+    site = pipeline.prepare(jsonl(folder, "pages.jsonl"), cfg)
+    index = {p["url"]: i for i, p in enumerate(site["pages"])}
+    cands = [{"i": index[c["source_url"]], "j": index[c["target_url"]], "b": c["block"], "query": c["query"],
+              "sim": c["sim"], "kind": c["kind"]} for c in jsonl(folder, "meaning_candidates.jsonl")]
+    anchors = {r["key"]: r["response"] for r in jsonl(folder, "jev_anchors.jsonl")}
+    answers = {r["key"]: r["response"] for r in jsonl(folder, "meaning_jev_pairs.jsonl")}
+    pages, titles, to_ask = site["pages"], site["titles"], 0
+    for c in cands:
+        src, tgt = pages[c["i"]], pages[c["j"]]
+        c["phrases"] = passages.phrase_candidates(src["blocks"][c["b"]]["text"], src["lang"],
+                                                  " ".join((c["query"], titles[c["j"]], tgt["h1"])))
+        c["phrase"] = None
+        if c["phrases"]:
+            state = pairs.anchor_state(src, titles[c["i"]], src["blocks"], c["b"], tgt, titles[c["j"]],
+                                       c["query"] or titles[c["j"]], src["lang"])
+            resp = anchors.get(pairs.anchor_cache_key(state, pairs.anchor_questions(c["phrases"], src["lang"]), LEGACY))
+            if resp is not None and pairs.anchor_well_formed(resp, c["phrases"]):
+                c["phrase"] = pairs.chosen_anchor(resp, c["phrases"])[0]
+            else:
+                to_ask += 1
+    rows = fanout.to_rows(cands, site)
+    for r in rows:
+        answer = answers.get(pairs.cache_key(r["_state"], r["lang"], LEGACY))
+        if answer is not None and pairs.well_formed(answer, r["lang"]):
+            r.update(pairs.summarize(answer, r["lang"]))
+        else:
+            to_ask += 1
+    pipeline.select(rows, cfg, cfg["max_links_per_page"])
+    with open(folder / "labels_meaning.csv", encoding="utf-8") as f:
+        labelled = {(r["source_url"], r["target_url"]): r["ok"] == "1" for r in csv.DictReader(f)}
+    accepted = [r for r in rows if r["decision"] == "accept"]
+    judged = [r for r in accepted if (r["source_url"], r["target_url"]) in labelled]
+    good = sum(labelled[(r["source_url"], r["target_url"])] for r in judged)
+    found = {(r["source_url"], r["target_url"]) for r in rows}
+    return {"pairs": len(rows), "to_judge": to_ask, "accepted": len(accepted), "accepted_labelled": len(judged),
+            "accepted_good": good, "precision": good / len(judged) if judged else None,
+            "unlabelled_accepted": [(r["source_url"], r["target_url"], r["anchor"]) for r in accepted
+                                    if (r["source_url"], r["target_url"]) not in labelled],
+            "lost_good": [k for k, ok in labelled.items() if ok and k not in found]}
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("folders", nargs="+")
@@ -92,6 +142,15 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  ! good pair no longer found: {k}")
         for s, t, a, ok in r["rephrased"]:
             print(f"  ~ new phrase for a pair labelled {'good' if ok else 'bad'}: {a!r} ({s} → {t})")
+        m = replay_meaning(Path(folder), cfg)
+        if m:
+            p = f"{m['precision']:.0%}" if m["precision"] is not None else "-"
+            print(f"  fan-out and semantic: {m['pairs']} pairs ({m['to_judge']} answers not in the cache), "
+                  f"links {m['accepted']}, labelled {m['accepted_labelled']}, good {m['accepted_good']} → precision {p}")
+            for k in m["lost_good"]:
+                print(f"  ! good pair no longer judged: {k}")
+            for k in m["unlabelled_accepted"]:
+                print(f"  ? accepted, not labelled: {k}")
 
 
 if __name__ == "__main__":

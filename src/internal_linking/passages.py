@@ -17,8 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from . import embeddings
-from .anchors import (CLOSERS, CONJUNCTIONS, MAX_GAP, OPENERS, PUNCT, SENTENCE_END, fold, is_filler, word_key,
-                      words)
+from .anchors import CLOSERS, CONJUNCTIONS, MAX_GAP, OPENERS, PUNCT, SENTENCE_END, fold, is_filler, same_word, words
 from .crawl import LINK_MARK
 from .jev import pairs
 
@@ -93,19 +92,31 @@ def best_per_page(scores: np.ndarray, page_of: np.ndarray, mask: np.ndarray, k: 
     return out
 
 
+def edge_word(token: str, word: str, lang: str) -> bool:
+    """Can a phrase start or end on this word? Not a function word, not a Polish infinitive - a link
+    text names a topic, not an action ("rozróżnić naturalne linki" was rejected by hand) - and not a
+    short lower-case word ("Zasięg vs"); acronyms and words with digits (AI, H1, n8n) are fine."""
+    if not word or is_filler(word, lang):
+        return False
+    if lang == "pl" and word.endswith("ć"):
+        return False
+    return len(word) >= 3 or any(c.isdigit() for c in word) or token.strip(PUNCT).isupper()
+
+
 def phrase_candidates(text: str, lang: str, hint: str) -> list[str]:
-    """Phrases of 2-6 words in a passage that could carry a link: they start and end on a content
-    word, never run into a bracket, a quote, an existing link or past a sentence end, never span a
-    conjunction ("ChatGPT or Gemini" names two things). Ranked by words shared with the hint (the
-    sub-query and the target's name), at most MAX_PHRASES."""
-    hint_keys = {word_key(fold(w)) for w in words(hint) if not is_filler(w, lang)}
+    """Phrases of 2-6 words in a passage that could carry a link: they start and end on a word that
+    can name a topic (edge_word), never run into a bracket, a quote, an existing link or past a
+    sentence end, never span a conjunction ("ChatGPT or Gemini" names two things). Ranked by words
+    shared with the hint (the sub-query and the target's name, in any inflected form), at most
+    MAX_PHRASES; when some phrase shares a word, only those."""
+    hint_words = [fold(w) for w in words(hint) if not is_filler(w, lang)]
     tokens = text.split()
     norm = [(words(t) or [""])[0] for t in tokens]
     found: dict[str, tuple] = {}
     for i in range(len(tokens)):
-        if tokens[i] == LINK_MARK or not norm[i] or is_filler(norm[i], lang):
+        if tokens[i] == LINK_MARK or not edge_word(tokens[i], norm[i], lang):
             continue
-        gap, content = 0, 0
+        gap = 0
         for j in range(i, min(i + PHRASE_WORDS[1], len(tokens))):
             w = norm[j]
             if tokens[j] == LINK_MARK or not w or (j > i and tokens[j].startswith(OPENERS)):
@@ -115,12 +126,11 @@ def phrase_candidates(text: str, lang: str, hint: str) -> list[str]:
             gap = gap + 1 if is_filler(w, lang) else 0
             if gap > MAX_GAP:
                 break
-            content += not is_filler(w, lang)
-            if j > i and not is_filler(w, lang):
+            if j > i and edge_word(tokens[j], w, lang):
                 phrase = " ".join(tokens[i:j + 1]).strip(PUNCT)
                 ws = words(phrase)
                 if PHRASE_WORDS[0] <= len(ws):
-                    hits = sum(word_key(fold(x)) in hint_keys for x in ws)
+                    hits = sum(any(same_word(fold(x), h) for h in hint_words) for x in ws if not is_filler(x, lang))
                     found.setdefault(phrase.lower(), (-hits, len(ws), i, phrase))
             if tokens[j].endswith(SENTENCE_END + (",",)) or tokens[j].rstrip(".,;:!?…").endswith(CLOSERS):
                 break

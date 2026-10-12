@@ -361,3 +361,25 @@ def test_fanout_option_mistakes(api, tmp_path, capsys, extra, message):
         cli.main(["--data-dir", "data", "run", "--domain", "example.pl", "--no-crawl", "--fanout", *extra])
     out = capsys.readouterr()
     assert stop.value.code == 1 and message in out.out + out.err
+
+
+def test_link_text_names_a_topic_not_an_action():
+    text = "Google potrafi rozróżnić naturalne linki od nabytych. Zasięg vs. cytowania to inna sprawa, a nagłówki H1 porządkują treść."
+    found = passages.phrase_candidates(text, "pl", "nienaturalne linki przychodzące zasięg nagłówki H1")
+    assert not any(f.lower().startswith("rozróżnić") or f.endswith("rozróżnić") for f in found)  # no infinitive at an edge
+    assert "Zasięg vs" not in found                                                           # no short word at an edge
+    assert "naturalne linki" in found and "nagłówki H1" in found                              # acronyms are fine
+
+
+def test_hint_words_count_in_any_inflected_form_but_not_by_a_shared_stem():
+    text = "Strategiczne podejście do schema łączy encje. Strategia treści opiera się na klastrach."
+    found = passages.phrase_candidates(text, "pl", "Strategia SEO na 2026")
+    assert "Strategiczne podejście" not in found  # "strategiczne" is not a form of "strategia"
+
+
+def test_pairs_found_by_meaning_meet_a_stricter_score():
+    row = {"jev_cannibalisation": 0.1, "jev_context": 0.9, "jev_anchor": 0.9, "score": 0.93, "jev_verdict": "ok"}
+    cfg = {**CFG, "score_min": 0.9, "meaning_score_min": 0.95}
+    assert pairs.reject_reason({**row, "anchor_type": "partial"}, cfg) == ""
+    assert pairs.reject_reason({**row, "anchor_type": "fanout"}, cfg) == "low_score"
+    assert pairs.reject_reason({**row, "anchor_type": "semantic", "score": 0.96}, cfg) == ""

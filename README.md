@@ -10,6 +10,14 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 
 ## Changelog
 
+### 0.6.1 - 2026-10-12
+- **Broken internal links:** every `run` checks the links in the content that point to pages of the site outside the crawl - one request each, cached for a week, `--no-link-check` skips it. A 404, a 410 or a "soft 404" (a 200 page titled "not found", as many CMSs serve for a missing post) is listed with the page the link was meant for (by its text and the old address), in `broken_links.csv`, a *Broken links* tab in the report and a *Broken links to repair* section in `links-for-agent.md`. A new link for the same pair is not proposed - the old one is repaired.
+- **Better link text for fan-out and semantic links:** a phrase starts and ends on a word that can name a topic - no Polish infinitive ("rozróżnić naturalne linki…"), no short lower-case word ("Zasięg vs"); words count as shared with the target only in an inflected form, not by a common stem ("Strategiczne" ≠ "Strategia"); Jev is asked for a phrase naming the target's topic, not an action.
+- **A stricter bar for links found by meaning:** `meaning_score_min` (0.93, a slider in the report) on top of the usual thresholds.
+- **Benchmark:** the fan-out and semantic pairs of the hand-labelled run are part of `tests/benchmark/` - the candidates found, the Jev answers and a label per pair; the test fails if a good pair stops reaching Jev or the picked links lose precision.
+
+  On that run, against the hand labels: the 6 fan-out and semantic links went from 2 good (33%) to 2 links, both good; the other 4 are gone - 3 lost their bad link text, 1 is now the repair of a broken link. All 4 good pairs still reach Jev. The threshold was set on these 29 pairs, so treat it as a first guess.
+
 ### 0.6.0 - 2026-10-12
 - **Query fan-out** (`run --fanout`, off by default): for the hub pages - the best linked content pages, or the ones you pick - the tool gets the searches each page and its neighbours should answer: real queries from a Search Console export (`--gsc`, optional) and 10-15 sub-queries from a model on OpenRouter (`FANOUT_MODEL`, `deepseek/deepseek-v4-pro` by default, about $0.0003 per hub, cached). Every sub-query is matched to the site's paragraphs: the hub answers it, a page it links to does, a page it does not link to does - a **link** - or nobody does - a **content gap**. See [Fan-out](#query-fan-out).
 - **Semantic phrases** (`run --semantic`): links to pages from paragraphs close to them in meaning, also when the text never names them.
@@ -144,6 +152,7 @@ Results land in `data/<domain>/` (change with `--data-dir`):
 - `run.json` - when the run was made and what it cost
 - `recommendations.csv` - every judged suggestion with its decision, reason and page similarity
 - `embeddings.jsonl` - one vector per page (cache)
+- `broken_links.csv` - links in the content to pages that no longer load, with the page each was meant for (also in the report and `links-for-agent.md`)
 - with `--fanout`: `fanout.csv` (every sub-query of every hub, who answers it and what became of the link) and `fanout_gaps.csv` (the questions nobody on the site answers); `fanout.jsonl` and `passages.jsonl` are caches
 
 Jev answers (`jev_pairs.jsonl`) and page embeddings (`embeddings.jsonl`) are cached, so re-runs only pay for new or changed pairs and pages. Rough numbers: a 50-page site takes about a minute and about $0.01; downloading is the slow part on large sites (about 0.5 s per page), the phrase search takes seconds thanks to a word index. `--sources` / `--targets` (regexes on the URL path) and `--sources-file` / `--targets-file` (lists of URLs or paths) choose which pages get links and which pages links may point to - the whole site is still crawled, so e.g. blog posts can link to service pages. On a shop with thousands of products they also keep the number of Jev calls - and the cost - under control; check it first with `--dry-run`.
@@ -161,7 +170,8 @@ Jev answers (`jev_pairs.jsonl`) and page embeddings (`embeddings.jsonl`) are cac
 
 1. **Insert** - by hand from the report, or give `links-for-agent.md` (or the report's *For AI agent (.md)* download of your current selection) to a coding agent in the site's repository: *"Insert the links from links-for-agent.md"*. It finds each passage in the source - Markdown/MDX, `.astro`, HTML, JSX - links the exact phrase in the file's own syntax and reports what it inserted or skipped.
 2. **Verify** - `internal-linking verify --domain example.com --base-url http://localhost:4321` on a local preview, or without `--base-url` after deploying. For every link: inserted as proposed, another link text, another passage, only in the menu, missing, or a target that does not load. Results go to `verify.csv` and the report's *Verification* tab; the exit code is 1 when anything is off, so it can run in CI. It checks `links-for-agent.md` from the last run; for a file downloaded from the report, add `--links latest` (the newest one in `~/Downloads`) or `--links <path>`.
-3. **Repeat** - the next `run` re-crawls the site, checks the previous list the same way and proposes only what is still missing.
+3. **Broken links** - `run` also checks the links already in your content that point to pages of the site outside the crawl. A 404, 410 or a "not found" page served with 200 is listed with the page it was most likely meant for (the link text and the old slug usually still name it): repair the address rather than adding a second link - the agent file lists these repairs too, and the tool does not propose a new link for the same pair.
+4. **Repeat** - the next `run` re-crawls the site, checks the previous list the same way and proposes only what is still missing.
 
 ## Panel
 
@@ -214,7 +224,7 @@ Without `--gsc` everything works on the generated sub-queries alone.
 
 **Cost** - one model call per hub (about $0.0003 with DeepSeek V4 Pro, $0.002 with Gemini 3.8 Flash; `FANOUT_MODEL` in `.env` picks any OpenRouter chat model with JSON output - the call goes to the cheapest provider that supports it, with reasoning off or at its minimum), the paragraph embeddings (about $0.002 per 1,000 paragraphs) and two Jev calls per link found (at most 6 per hub). A 60-page blog with every content page as a hub is a few cents. Everything is cached - in `fanout.jsonl`, `passages.jsonl` and `jev_anchors.jsonl` - so a second run pays only for what changed; `--dry-run` shows the count first.
 
-**Measured separately.** Fan-out and semantic links are new: `sample --anchor-type fanout` draws only them for labelling and `evaluate` reports their precision and the AUC of the paragraph similarity on their own, outside the threshold search. The thresholds that decide whether a paragraph answers a question (`fanout_answer_min`), when a generated query is a Search Console one (`fanout_merge_min`) and how close a paragraph must be for a semantic link (`semantic_min`) are in `config.json`.
+**Measured separately.** Fan-out and semantic links are new: they must also reach `meaning_score_min` (0.93) - a stricter Jev score than phrase-matched links, set on 29 hand-labelled pairs. `sample --anchor-type fanout` draws only them for labelling and `evaluate` reports their precision and the AUC of the paragraph similarity on their own, outside the threshold search. The thresholds that decide whether a paragraph answers a question (`fanout_answer_min`), when a generated query is a Search Console one (`fanout_merge_min`) and how close a paragraph must be for a semantic link (`semantic_min`) are in `config.json`.
 
 ## Embeddings and the link graph
 
@@ -263,6 +273,7 @@ src/internal_linking/
 ├── embeddings.py     # page embeddings (Qwen3 Embedding 8B via OpenRouter), similarity, topic map, `embed` command
 ├── passages.py       # paragraph embeddings, queries matched to paragraphs, phrases in a paragraph
 ├── fanout.py         # query fan-out: hubs, Search Console import, sub-queries, coverage, semantic phrases
+├── broken.py         # broken internal links in the content and the page each was meant for
 ├── report.py         # interactive report.html with the Graph and Verification views, `report` command
 ├── agent.py          # links-for-agent.md for a coding agent
 ├── verify.py         # `verify`: are the links on the site

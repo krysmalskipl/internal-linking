@@ -1,0 +1,30 @@
+source_url,target_url,anchor,anchor_type,ok,why
+https://krysmalski.pl/blog/3-filary-seo-on-page-off-page-i-techniczne-seo,https://krysmalski.pl/blog/jak-stosowac-naglowki-h1-h2-h3-w-tresciach-seo,Używanie nagłówków H1,semantic,1,
+https://krysmalski.pl/blog/aeo-kontra-seo-jak-zyskac-widocznosc-w-wyszukiwarkach-i-wynikach-ai,https://krysmalski.pl/blog/robots-txt-crawlery-ai-2026,robots.txt pod kątem crawlerów,semantic,0,fix the broken link in this sentence instead
+https://krysmalski.pl/blog/faq-schema-i-dane-strukturalne-jak-zwiekszyc-cytowalnosc-przez-ai,https://krysmalski.pl/blog/ai-crawlability-ruch-botow-optymalizacja-ai-search,weryfikacji częstotliwości wejść botów AI,semantic,0,weak anchor
+https://krysmalski.pl/blog/linkbuilding-bez-ryzyka-w-2026-strategie-odporne-na-aktualizacje-google,https://krysmalski.pl/blog/nienaturalne-linki-przychodzace,rozróżnić naturalne linki od nabytych,fanout,0,verb phrase as anchor
+https://krysmalski.pl/blog/optymalizacja-grafik-pod-seo,https://krysmalski.pl/blog/lazy-loading-jeden-z-fundamentow-dobrego-seo,leniwego ładowania,semantic,1,
+https://krysmalski.pl/blog/robots-txt-crawlery-ai-2026,https://krysmalski.pl/blog/ai-crawlability-ruch-botow-optymalizacja-ai-search,ruchu z AI Search,semantic,0,"anchor promises AI search traffic, target is bot-log analysis"
+https://krysmalski.pl/,https://krysmalski.pl/blog/3-filary-seo-on-page-off-page-i-techniczne-seo,SEO techniczne,fanout,0,"wrong_intent: service page, beginner article"
+https://krysmalski.pl/,https://krysmalski.pl/blog/dlaczego-google-i-ai-nie-widza-twojej-strony-10-powodow,widoczność lokalną w Google,fanout,0,wrong_intent
+https://krysmalski.pl/blog/3-filary-seo-on-page-off-page-i-techniczne-seo,https://krysmalski.pl/blog/kompleksowy-audyt-seo-2025-strategiczne-podejscie,Core Web Vitals,fanout,0,target not about Core Web Vitals
+https://krysmalski.pl/blog/aeo-kontra-seo-jak-zyskac-widocznosc-w-wyszukiwarkach-i-wynikach-ai,https://krysmalski.pl/blog/ai-crawlability-ruch-botow-optymalizacja-ai-search,Ruch z domen silników AI,semantic,1,
+https://krysmalski.pl/blog/audyt-seo-strony-internetowej-kompletny-przewodnik,https://krysmalski.pl/blog/kompleksowy-audyt-seo-2025-strategiczne-podejscie,Core Web Vitals,fanout,0,target not about Core Web Vitals
+https://krysmalski.pl/blog/bledy-structured-data-widocznosc-ai-pulapki-seo,https://krysmalski.pl/blog/strategia-seo-krok-po-kroku-praktyczny-przewodnik,Strategiczne podejście,fanout,0,weak_anchor
+https://krysmalski.pl/blog/czym-jest-geo-w-seo-optymalizacja-pod-wyszukiwarki-ai,https://krysmalski.pl/blog/aeo-kontra-seo-jak-zyskac-widocznosc-w-wyszukiwarkach-i-wynikach-ai,Zasięg vs,semantic,0,weak_anchor
+https://krysmalski.pl/blog/dlaczego-google-i-ai-nie-widza-twojej-strony-10-powodow,https://krysmalski.pl/blog/seo-dla-stron-statycznych-problemy-techniczne,mapa witryny XML,fanout,0,off_topic
+https://krysmalski.pl/blog/geo-dla-developerow-optymalizacja-tresci-pod-silniki-generatywne,https://krysmalski.pl/blog/czym-jest-geo-w-seo-optymalizacja-pod-wyszukiwarki-ai,GEO skupia,semantic,0,weak_anchor
+https://krysmalski.pl/blog/geo-dla-developerow-optymalizacja-tresci-pod-silniki-generatywne,https://krysmalski.pl/blog/linkbuilding-bez-ryzyka-w-2026-strategie-odporne-na-aktualizacje-google,ranking linków,fanout,0,off_topic
+https://krysmalski.pl/blog/google-aktualizuje-wytyczne-dotyczace-tresci-ai-reczna-weryfikacja,https://krysmalski.pl/blog/wizytowka-nap-co-to-jest-i-dlaczego-jest-wazna-w-seo,Schema JSON-LD,fanout,0,off_topic
+https://krysmalski.pl/blog/google-search-console-kompletny-przewodnik,https://krysmalski.pl/blog/kompleksowy-audyt-seo-2025-strategiczne-podejscie,Sprawdź Core Web Vitals,fanout,0,off_topic
+https://krysmalski.pl/blog/indeksowanie-strony-w-google,https://krysmalski.pl/blog/dlaczego-google-i-ai-nie-widza-twojej-strony-10-powodow,raporcie Stanu w Google Search Console,fanout,0,anchor promises the GSC report
+https://krysmalski.pl/blog/jak-dobrac-slowa-kluczowe-do-strategii-twojego-seo,https://krysmalski.pl/blog/jev-modele-decyzyjne-seo,modelowi kategoryzacji zapytań,fanout,0,off_topic
+https://krysmalski.pl/blog/jak-dobrac-slowa-kluczowe-do-strategii-twojego-seo,https://krysmalski.pl/blog/aeo-kontra-seo-jak-zyskac-widocznosc-w-wyszukiwarkach-i-wynikach-ai,inteligentnych wyszukiwarkach,semantic,0,weak_anchor
+https://krysmalski.pl/blog/jak-pisac-opisy-kategorii-w-sklepie-seo-i-konwersja,https://krysmalski.pl/blog/jak-pisac-opisy-kategorii-w-sklepie,Opisy kategorii w sklepie,semantic,0,near-duplicate article - cannibalisation
+https://krysmalski.pl/blog/kompleksowy-audyt-seo-2025-strategiczne-podejscie,https://krysmalski.pl/blog/audyt-seo-strony-internetowej-kompletny-przewodnik,przystąpieniem do audytu,fanout,0,weak_anchor
+https://krysmalski.pl/blog/mobile-first-indexing-z-czym-to-sie-je,https://krysmalski.pl/blog/dlaczego-google-i-ai-nie-widza-twojej-strony-10-powodow,spowolnieniem indeksacji,fanout,0,weak_anchor
+https://krysmalski.pl/blog/opisy-kategorii-pod-seo,https://krysmalski.pl/blog/jak-pisac-opisy-kategorii-w-sklepie,Optymalizacja stron kategorii w dużych sklepach,fanout,0,cannibalisation
+https://krysmalski.pl/uslugi,https://krysmalski.pl/blog/n8n-agents-autonomiczne-agenty-ai-automatyzacja,autonomiczne workflowy w n8n,semantic,1,
+https://krysmalski.pl/uslugi,https://krysmalski.pl/blog/audyt-seo-strony-internetowej-kompletny-przewodnik,Głębokie audyty,fanout,0,weak_anchor
+https://krysmalski.pl/uslugi,https://krysmalski.pl/blog,Analiza kodu,semantic,0,too_generic
+https://krysmalski.pl/uslugi,https://krysmalski.pl/blog/kompleksowy-audyt-seo-2025-strategiczne-podejscie,optymalizacja Core Web Vitals,fanout,0,target not about Core Web Vitals

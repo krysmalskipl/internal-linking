@@ -1,4 +1,6 @@
 {
-  "max_pairs": 230,
-  "min_precision": 0.9
+ "max_pairs": 230,
+ "min_precision": 0.9,
+ "meaning_min_precision": 0.9,
+ "meaning_min_good": 2
 }

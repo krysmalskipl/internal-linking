@@ -11,5 +11,6 @@
   "fanout_answer_min": 0.72,
   "fanout_merge_min": 0.95,
   "semantic_min": 0.72,
+  "meaning_score_min": 0.93,
   "archive_patterns": ["/(tag|tags|tagi|author|authors|autor|autorzy)/", "/page/\\d+/?$", "^/\\d{4}/(\\d{2}/)?$"]
 }

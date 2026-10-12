@@ -447,6 +447,25 @@ def to_rows(cands: list[dict], site: dict) -> list[dict]:
 def run(pages: list[dict], cfg: dict, args, ddir: Path, domain: str, existing: set[tuple[str, str]]) -> tuple[list[dict], dict, float]:
     """Fan-out (--fanout) and semantic (--semantic) candidates for `run`: rows to judge, what the
     results need (coverage items, hubs) and the cost of the model, the embeddings and the link-text calls."""
+    site, cands, items, hubs, gsc_n, cost = candidates(pages, cfg, args, ddir, domain, existing)
+    cost += pick_anchors(cands, site, ddir, args.workers)
+    for c in cands:
+        if c["kind"] == "fanout" and not c["phrase"]:
+            c["item"]["link"] = "no phrase in the passage" if not c["phrases"] else "no fitting link text"
+    rows = to_rows(cands, site)
+    states = Counter(it["state"] for it in items)
+    if args.fanout:
+        print(f"fan-out: {len(hubs)} hubs, {len(items)} sub-queries ({gsc_n} from GSC) - the hub answers {states['hub']}, "
+              f"a linked page {states['linked']}, a page without a link {states['unlinked']}, nobody {states['gap']}")
+    print(f"{'fan-out and semantic' if args.fanout and args.semantic else 'fan-out' if args.fanout else 'semantic'} "
+          f"pairs to judge: {len(rows)} (no fitting link text: {sum(not c['phrase'] for c in cands)})")
+    return rows, {"site": site, "items": items, "hubs": hubs, "model": model() if args.fanout else ""}, cost
+
+
+def candidates(pages: list[dict], cfg: dict, args, ddir: Path, domain: str,
+               existing: set[tuple[str, str]]) -> tuple[dict, list[dict], list[dict], list[int], int, float]:
+    """Everything before the link text: (site, candidates, coverage items, hubs, GSC queries used, cost).
+    A candidate is {i: source, j: target, b: block, query, sim, kind}."""
     from .pipeline import load_url_list, prepare
 
     site = prepare(pages, cfg, args.sources, args.targets, load_url_list(args.sources_file, domain),
@@ -477,18 +496,7 @@ def run(pages: list[dict], cfg: dict, args, ddir: Path, domain: str, existing: s
                                             ddir, min(workers, 4))
         cands += sem
         cost += emb_cost
-    cost += pick_anchors(cands, site, ddir, workers)
-    for c in cands:
-        if c["kind"] == "fanout" and not c["phrase"]:
-            c["item"]["link"] = "no phrase in the passage" if not c["phrases"] else "no fitting link text"
-    rows = to_rows(cands, site)
-    states = Counter(it["state"] for it in items)
-    if args.fanout:
-        print(f"fan-out: {len(hubs)} hubs, {len(items)} sub-queries ({gsc_n} from GSC) - the hub answers {states['hub']}, "
-              f"a linked page {states['linked']}, a page without a link {states['unlinked']}, nobody {states['gap']}")
-    print(f"{'fan-out and semantic' if args.fanout and args.semantic else 'fan-out' if args.fanout else 'semantic'} "
-          f"pairs to judge: {len(rows)} (no fitting link text: {sum(not c['phrase'] for c in cands)})")
-    return rows, {"site": site, "items": items, "hubs": hubs, "model": model() if args.fanout else ""}, cost
+    return site, cands, items, hubs, gsc_n, cost
 
 
 def dry_run(pages: list[dict], cfg: dict, args, ddir: Path, domain: str) -> dict:
