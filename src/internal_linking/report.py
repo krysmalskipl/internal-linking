@@ -9,21 +9,23 @@ The Graph view draws the whole site with force-graph (vendor/, inlined so the fi
 pages sized by their links in, the links in content today, the new links and - with embeddings -
 a topic map, the similarity of every link and the closest pages that are not linked yet. Clicking
 a page zooms in on it: its linked pages gather around it (the more similar, the closer) and the
-rest of the site moves aside. `internal-linking report` rebuilds the file from saved results.
+rest of the site moves aside. The Fan-out view (after `run --fanout`) shows, per hub, which of
+its sub-queries the hub answers itself, through a page it links to, through a page it does not
+link to, or not at all. `internal-linking report` rebuilds the file from saved results.
 """
 import json
 from pathlib import Path
 
 import numpy as np
 
-from . import agent, embeddings, verify
+from . import agent, embeddings, fanout, verify
 from .anchors import detect_lang
 from .common import clean_title, data_dir, is_archive, norm_url, now, read_csv, read_jsonl, site_suffixes
 from .config import load_config
 from .crawl import strip_boilerplate, strip_excerpts
 
 NUMERIC = {"score": "sc", "jev_context": "cx", "jev_anchor": "an", "jev_value": "va", "jev_cannibalisation": "ca",
-           "similarity": "si"}
+           "similarity": "si", "passage_similarity": "ps"}
 GRAPH_LIB = Path(__file__).with_name("vendor") / "force-graph.min.js"
 NO_LIMIT = 31  # the "links to one page" slider's last stop
 
@@ -44,6 +46,8 @@ def _compact(r: dict) -> dict:
         row[key] = _num(r.get(field))
     if r.get("keyword"):
         row["k"] = r["keyword"]
+    if r.get("subquery"):
+        row["sq"] = r["subquery"]
     return row
 
 
@@ -132,6 +136,7 @@ def write_report(path: Path, domain: str, rows: list[dict], cfg: dict, max_links
         "rows": [_compact(r) for r in rows],
         "pages": page_summary(pages, cfg) if pages else {},
         "graph": link_graph(pages, vectors) if pages else {"nodes": [], "links": [], "near": []},
+        "fanout": fanout.load(path.parent),
     }
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     # the library first: the data goes in last, so nothing in it is ever taken for a placeholder
@@ -201,6 +206,7 @@ header { padding:22px 20px 8px; max-width:1320px; margin:0 auto; display:flex; j
   border-radius:999px; cursor:pointer } .theme button.on { background:var(--ink); color:var(--bg); font-weight:600 }
 h1 { font-size:26px; margin:0; font-weight:700 } h1 .dot { color:var(--accent) } .sub { color:var(--muted); margin:2px 0 0; font-size:14px }
 .layout { display:grid; grid-template-columns:290px 1fr; gap:20px; max-width:1320px; margin:0 auto; padding:12px 20px 60px }
+.layout > * { min-width:0 }  /* a wide table scrolls in its own box, not the page */
 aside { position:sticky; top:12px; align-self:start; background:var(--panel); border:1px solid var(--line);
   border-radius:14px; padding:16px; box-shadow:var(--shadow); max-height:calc(100vh - 24px); overflow:auto }
 aside h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 10px }
@@ -220,7 +226,7 @@ select, input[type=search] { width:100%; font:inherit; font-size:14px; padding:7
 .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; align-items:center }
 .tab { font:inherit; font-size:14px; border:1px solid var(--line); background:var(--panel); color:var(--ink);
   padding:7px 12px; border-radius:999px; cursor:pointer } .tab.on { background:var(--accent-btn); color:#fff; border-color:var(--accent-btn) }
-.tabs .right { margin-left:auto; display:flex; gap:6px }
+.tabs .right { margin-left:auto; display:flex; gap:6px; flex-wrap:wrap }
 .group { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px;
   margin-bottom:14px; box-shadow:var(--shadow) }
 .group-h { display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap }
@@ -312,6 +318,19 @@ details.tbl table { margin-top:8px } details.tbl td { font-variant-numeric:tabul
 .force-graph-container .float-tooltip-kap { font:12px/1.45 var(--body); color:var(--ink); background:var(--panel);
   border:1px solid var(--line); border-radius:8px; padding:6px 9px; box-shadow:0 4px 14px rgba(10,10,10,.14); max-width:320px }
 .float-tooltip-kap b { font-size:13px } .float-tooltip-kap .url { display:block }
+.cov { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.4fr); gap:6px 14px; align-items:center; font-size:14px }
+.cov button { font:inherit; text-align:left; background:none; border:0; color:var(--ink); cursor:pointer; padding:2px 0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .cov button.on { color:var(--accent); font-weight:700 }
+.covbar { display:flex; height:14px; border-radius:999px; overflow:hidden; background:var(--soft) } .covbar i { display:block }
+.st-hub { background:var(--accent) } .st-linked { background:var(--g-sim) } .st-unlinked { background:var(--warn) }
+.st-gap { background:var(--bad) } .legend { display:flex; gap:12px; flex-wrap:wrap; font-size:13px; color:var(--muted); margin:10px 0 0 }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px }
+.fbar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px } .fbar select { width:auto; max-width:100% }
+.tblwrap { overflow-x:auto } table.fq { width:100%; border-collapse:collapse; font-size:14px; min-width:640px }
+.fq th, .fq td { text-align:left; padding:8px 10px 8px 0; border-bottom:1px solid var(--line); vertical-align:top }
+.fq th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase } .fq td.n { font-variant-numeric:tabular-nums; white-space:nowrap }
+.sbadge { display:inline-block; font-size:12px; font-weight:600; border-radius:999px; padding:2px 9px; white-space:nowrap; color:#fff }
+.sbadge.st-linked, .sbadge.st-unlinked { color:#0a0a0a }
 @media (max-width: 860px) { .layout { grid-template-columns:1fr } aside { position:static; max-height:none }
   .gstage { height:66vh; min-height:380px } .ghint { display:none }
   .focus { top:auto; left:8px; right:8px; bottom:8px; width:auto; max-height:46% } }
@@ -336,8 +355,7 @@ details.tbl table { margin-top:8px } details.tbl td { font-variant-numeric:tabul
   <div class="f"><label>Links per page <span id="v-max"></span></label><input type="range" min="1" max="15" id="f-max"></div>
   <div class="f"><label>Links to one page <span id="v-maxt"></span></label><input type="range" min="1" max="__NO_LIMIT__" id="f-maxt">
     <small>new links to the same target - the best ones win</small></div>
-  <div class="f"><label>Match type</label><select id="f-type"><option value="all">exact + partial</option>
-    <option value="exact">exact only</option><option value="partial">partial only</option></select></div>
+  <div class="f"><label>Match type</label><select id="f-type"></select></div>
   <div class="f" id="f-lang-wrap"><label>Language</label><select id="f-lang"></select></div>
   <div class="f" id="f-kw-wrap"><label>Keyword</label><select id="f-kw"></select></div>
   <div class="f"><label>Search</label><input type="search" id="f-q" placeholder="page, target or phrase"></div>
@@ -350,7 +368,7 @@ details.tbl table { margin-top:8px } details.tbl td { font-variant-numeric:tabul
     <button class="tab" data-view="pagelist" title="every page with its links today and after the changes">Pages</button>
     <button class="tab" data-view="graph" id="tab-graph" title="the whole site as a graph: pages, links today, new links, similarity">Graph</button>
     <button class="tab" data-view="verify" id="tab-verify" title="are the links handed out inserted? (internal-linking verify)">Verification</button>
-    <button class="tab" data-view="keywords" id="tab-kw">Keywords</button><button class="tab" data-view="rejected">Rejected</button>
+    <button class="tab" data-view="keywords" id="tab-kw">Keywords</button><button class="tab" data-view="fanout" id="tab-fan" title="the sub-queries of the hub pages and which page answers each (run --fanout)">Fan-out</button><button class="tab" data-view="rejected">Rejected</button>
     <div class="right"><select id="sort" class="sort" aria-label="Sort">
       <option value="count">Most new links</option><option value="weak">Weakest linked today</option><option value="az">A-Z</option></select>
       <button class="btn" id="toggle-all">Expand all</button><button class="btn" id="md" title="the selected links with instructions for a coding agent (Claude Code, Antigravity...) that inserts them in the site's source; `internal-linking verify` checks the result">For AI agent (.md)</button><button class="btn primary" id="csv">Download CSV</button></div></div>
@@ -400,7 +418,7 @@ const langs = [...new Set(rows.map(r => r.l).filter(Boolean))];
 const keywords = [...new Set(rows.map(r => r.k).filter(Boolean))].sort();
 let S = { ...D.defaults, type:"all", lang:"all", kw:"all", q:"", view:"out", sort:"count", hidden:{} };
 try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) {}
-if (!["out", "in", "pagelist", "graph", "verify", "keywords", "rejected"].includes(S.view)) S.view = S.view === "targets" ? "in" : "out";
+if (!["out", "in", "pagelist", "graph", "verify", "keywords", "fanout", "rejected"].includes(S.view)) S.view = S.view === "targets" ? "in" : "out";
 const inbound = u => (D.pages[u] || {}).in;
 // how a page is linked today: "orphan" - no internal link at all (only the sitemap knows it);
 // "none" - no links in other pages' content, only menu, footer or breadcrumbs; "weak" - 1-2 in content
@@ -432,6 +450,13 @@ $("sub").textContent = D.domain + " · " + (D.run_at ? "run " + timeOf(D.run_at)
 if (!rows.some(r => r.si != null)) $("f-sim-wrap").hidden = true;
 if (!(D.graph && D.graph.nodes.length)) { $("tab-graph").hidden = true; if (S.view === "graph") S.view = "out"; }
 if (!D.verify.length) { $("tab-verify").hidden = true; if (S.view === "verify") S.view = "out"; }
+const FAN = D.fanout && D.fanout.rows.length ? D.fanout : null;
+if (!FAN) { $("tab-fan").hidden = true; if (S.view === "fanout") S.view = "out"; }
+// match types: by name (exact, partial) and by meaning (fanout, semantic - see README, Fan-out)
+const TYPES = { exact: "exact", partial: "partial", fanout: "fan-out (by sub-query)", semantic: "semantic (by meaning)" };
+const types = Object.keys(TYPES).filter(t => rows.some(r => r.ty === t));
+$("f-type").innerHTML = '<option value="all">all types</option>' + types.map(t => `<option value="${t}">${esc(TYPES[t])} only</option>`).join("");
+if (S.type !== "all" && !types.includes(S.type)) S.type = "all";
 // verify.py statuses: class of the badge, label (icon + words, never colour alone)
 const VSTATE = { ok: ["new", "✓ inserted"], other_text: ["weak", "! other link text"], other_place: ["weak", "! other passage"],
   outside_content: ["weak", "! menu or footer only"], missing: ["orphan", "✗ not linked yet"],
@@ -484,9 +509,9 @@ function item(r, mode) {
     : `<div class="k">Link to</div><div><a href="${esc(r.t)}" target="_blank">${esc(r.tt || path(r.t))}</a> <span class="url">${esc(path(r.t))}</span>${r.m ? '<span class="pill">already in menu</span>' : ""}</div>`;
   return `<div class="item"><div class="steps">
     <div class="k">In the ${esc(r.pl || "text")}</div><div class="ctx">${highlight(r.c || "", r.a)}</div>
-    <div class="k">Link text</div><div><span class="anchor">${esc(r.a)}</span><span class="pill">${esc(r.ty)}</span>${r.k ? `<span class="pill">keyword: ${esc(r.k)}</span>` : ""}</div>
+    <div class="k">Link text</div><div><span class="anchor">${esc(r.a)}</span><span class="pill">${esc(r.ty)}</span>${r.k ? `<span class="pill">keyword: ${esc(r.k)}</span>` : ""}${r.sq ? `<span class="pill" title="the hub's sub-query the target answers">answers: ${esc(r.sq)}</span>` : ""}</div>
     ${where}</div>
-    <div class="metrics">${bar("score", r.sc)}${bar("context", r.cx)}${bar("anchor", r.an)}${bar("value", r.va)}${bar("cannibal.", r.ca, true)}${r.si != null ? bar("similarity", r.si) : ""}</div>
+    <div class="metrics">${bar("score", r.sc)}${bar("context", r.cx)}${bar("anchor", r.an)}${bar("value", r.va)}${bar("cannibal.", r.ca, true)}${r.si != null ? bar("similarity", r.si) : ""}${r.ps != null ? bar("passage", r.ps) : ""}</div>
     <div class="actions"><button class="btn" data-copy="${esc(r.a)}">Copy link text</button>
       <button class="btn" data-copy="${esc(r.t)}">Copy URL</button><button class="btn" data-copy="${esc(html(r))}">Copy HTML</button></div></div>`;
 }
@@ -585,6 +610,8 @@ function render() {
           <div><span class="badge ${(VSTATE[x.st] || ["weak"])[0]}">${esc((VSTATE[x.st] || [0, x.st])[1])}</span></div></div>`).join("")
         : '<div class="empty">Nothing with these filters.</div>') + "</section>" +
       (list.length > shown * 5 ? `<div class="more"><button class="btn" id="more">Show more (${list.length - shown * 5} left)</button></div>` : "");
+  } else if (S.view === "fanout") {
+    v.innerHTML = fanoutView(acc);
   } else if (S.view === "keywords") {
     const kws = groups(rows.filter(r => r.k), "k");
     v.innerHTML = `<section class="group"><table class="kw"><tr><th>Keyword</th><th>Target</th><th>Found on</th><th>Links</th><th>Main reject reasons</th></tr>` +
@@ -608,6 +635,48 @@ function render() {
       (rej.length > shown * 5 ? `<div class="more"><button class="btn" id="more">Show more (${rej.length - shown * 5} left)</button></div>` : "");
   }
 }
+// Fan-out: per hub, which sub-queries the hub answers itself, a page it links to, a page it does not
+// link to (a link opportunity) or nobody (a content gap - an idea, not a page to write for every variant)
+const FSTATE = { hub: "the hub answers", linked: "a linked page answers", unlinked: "a page without a link answers", gap: "nobody answers - gap" };
+const FSRC = { gsc: "GSC", "gsc+ai": "GSC + AI", ai: "AI" };
+let F = { hub: "all", st: "all", src: "all", ty: "all" };
+function fanoutView(acc) {
+  const q = S.q.trim().toLowerCase(), byHub = {};
+  for (const x of FAN.rows) (byHub[x.h] = byHub[x.h] || { hub: 0, linked: 0, unlinked: 0, gap: 0, n: 0 }, byHub[x.h][x.st]++, byHub[x.h].n++);
+  const title = u => (FAN.hubs.find(h => h.u === u) || {}).t || path(u);
+  const all = Object.keys(FSTATE).reduce((o, k) => (o[k] = FAN.rows.filter(x => x.st === k).length, o), {});
+  const hubs = FAN.hubs.filter(h => byHub[h.u]).sort((a, b) => byHub[b.u].unlinked - byHub[a.u].unlinked || byHub[b.u].gap - byHub[a.u].gap);
+  const seg = c => Object.keys(FSTATE).map(k => c[k] ? `<i class="st-${k}" style="width:${100 * c[k] / c.n}%" title="${esc(FSTATE[k])}: ${c[k]}"></i>` : "").join("");
+  const list = FAN.rows.filter(x => (F.hub === "all" || x.h === F.hub) && (F.st === "all" || x.st === F.st) &&
+    (F.src === "all" || x.src === F.src) && (F.ty === "all" || x.ty === F.ty) &&
+    (!q || [x.q, x.h, x.b, x.bt].some(y => String(y || "").toLowerCase().includes(q))));
+  const sel = (key, label, opts) => `<select data-f="${key}" aria-label="${label}"><option value="all">${label}: all</option>` +
+    opts.map(([k, l]) => `<option value="${esc(k)}" ${F[key] === k ? "selected" : ""}>${esc(l)}</option>`).join("") + "</select>";
+  const tys = [...new Set(FAN.rows.map(x => x.ty))].sort();
+  const props = acc.filter(r => r.ty === "fanout" && (F.hub === "all" || r.s === F.hub));
+  return `<p class="muted">${FAN.rows.length} sub-queries of ${hubs.length} hub pages${FAN.model ? ` (generated with ${esc(FAN.model)}` + (FAN.rows.some(x => x.src !== "ai") ? ", real queries from Search Console first)" : ")") : ""}.
+      Gaps are ideas for content the site does not cover yet - not a list of pages to write for every query variant.</p>
+    <section class="group"><div class="group-h"><h3>Coverage per hub</h3><span class="count">${Object.keys(FSTATE).map(k => `${all[k]} ${k}`).join(" · ")}</span></div>
+      <div class="legend">${Object.keys(FSTATE).map(k => `<span><i class="st-${k}"></i>${esc(FSTATE[k])}</span>`).join("")}</div>
+      <div class="cov" style="margin-top:12px">${hubs.map(h => `<button data-fhub="${esc(h.u)}" class="${F.hub === h.u ? "on" : ""}" title="${esc(h.u)}">${esc(h.t || path(h.u))}</button>
+        <div class="covbar" role="img" aria-label="${esc(Object.keys(FSTATE).map(k => `${FSTATE[k]}: ${byHub[h.u][k]}`).join(", "))}">${seg(byHub[h.u])}</div>`).join("")}</div></section>
+    <section class="group"><div class="group-h"><h3>Sub-queries${F.hub !== "all" ? " of " + esc(title(F.hub)) : ""}</h3><span class="count">${list.length} shown</span></div>
+      <div class="fbar" style="margin-top:10px">${sel("hub", "Hub", hubs.map(h => [h.u, h.t || path(h.u)]))}${sel("st", "State", Object.entries(FSTATE))}
+        ${sel("src", "Source", Object.entries(FSRC).filter(([k]) => FAN.rows.some(x => x.src === k)))}${sel("ty", "Type", tys.map(t => [t, t]))}</div>
+      <div class="tblwrap"><table class="fq"><tr><th>Sub-query</th><th>Source</th><th>State</th><th>Best answer elsewhere</th><th>Link</th></tr>` +
+      list.slice(0, shown * 5).map(x => `<tr><td><b>${esc(x.q)}</b><div class="url">${esc(x.ty)}${F.hub === "all" ? " · " + esc(path(x.h)) : ""}</div></td>
+        <td class="n">${esc(FSRC[x.src] || x.src)}${x.i !== "" && x.i != null ? `<div class="url">${x.c} clicks · ${x.i} impr.</div>` : ""}</td>
+        <td><span class="sbadge st-${x.st}">${esc(x.st === "hub" ? "hub" : x.st === "linked" ? "linked" : x.st === "unlinked" ? "no link" : "gap")}</span>
+          <div class="url">hub ${pct(x.hs)}</div></td>
+        <td>${x.b ? `<a href="${esc(x.b)}" target="_blank">${esc(x.bt || path(x.b))}</a> <span class="url">${pct(x.s)}</span>
+          ${x.p ? `<div class="muted" style="font-size:13px">${esc(x.p.slice(0, 160))}${x.p.length > 160 ? "…" : ""}</div>` : ""}` : "–"}</td>
+        <td class="muted">${esc(x.lk || (x.st === "unlinked" ? "" : "–"))}</td></tr>`).join("") +
+      `</table></div>${list.length > shown * 5 ? `<div class="more"><button class="btn" id="more">Show more (${list.length - shown * 5} left)</button></div>` : ""}</section>
+    <section class="group"><div class="group-h"><h3>Links from fan-out</h3><span class="count">${props.length} pass the filters on the left</span></div>
+      ${props.length ? props.slice(0, 30).map(r => `<div class="muted" style="margin-top:10px">on <a href="${esc(r.s)}" target="_blank">${esc(r.st || path(r.s))}</a></div>` + item(r, "out")).join("")
+        : '<div class="empty">No fan-out link passes these filters.</div>'}</section>`;
+}
+$("view").addEventListener("change", e => { const f = e.target.dataset.f; if (f) { F[f] = e.target.value; shown = LIMIT; render(); } });
 function sync() {
   for (const k of ["score", "ctx", "anc", "val", "can", "sim", "max", "maxt"]) {
     $("f-" + k).value = S[k];
@@ -634,14 +703,16 @@ $("view").addEventListener("click", e => {
   if (go) { S.view = go.dataset.goto; S.q = go.dataset.q; expandAll = true; update(); window.scrollTo(0, 0); return; }
   const c = e.target.closest("[data-copy]");
   if (c) { navigator.clipboard?.writeText(c.dataset.copy).then(() => { $("toast").classList.add("show"); setTimeout(() => $("toast").classList.remove("show"), 1200); }); return; }
+  const fh = e.target.closest("[data-fhub]");
+  if (fh) { F.hub = F.hub === fh.dataset.fhub ? "all" : fh.dataset.fhub; render(); return; }
   const chip = e.target.closest(".chip");
   if (chip) { S.hidden[chip.dataset.reason] = !S.hidden[chip.dataset.reason]; sync(); render(); return; }
   if (e.target.id === "more") { shown += LIMIT; render(); }
 });
 $("csv").addEventListener("click", () => {
-  const acc = evaluate(), cols = ["source_url", "source_title", "placement", "anchor", "anchor_type", "target_url", "target_title", "score", "similarity", "context"];
+  const acc = evaluate(), cols = ["source_url", "source_title", "placement", "anchor", "anchor_type", "target_url", "target_title", "score", "similarity", "context", "passage_similarity", "subquery"];
   const q = x => '"' + String(x ?? "").replace(/"/g, '""') + '"';
-  const lines = [cols.join(",")].concat(acc.map(r => [r.s, r.st, r.pl, r.a, r.ty, r.t, r.tt, r.sc, r.si, r.c].map(q).join(",")));
+  const lines = [cols.join(",")].concat(acc.map(r => [r.s, r.st, r.pl, r.a, r.ty, r.t, r.tt, r.sc, r.si, r.c, r.ps, r.sq].map(q).join(",")));
   download("﻿" + lines.join("\n"), `links-${D.domain}-${stamp()}.csv`, "text/csv");
 });
 function download(text, name, type) {

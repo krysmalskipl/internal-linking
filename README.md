@@ -10,6 +10,16 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 
 ## Changelog
 
+### 0.6.0 - 2026-10-12
+- **Query fan-out** (`run --fanout`, off by default): for the hub pages - the best linked content pages, or the ones you pick - the tool gets the searches each page and its neighbours should answer: real queries from a Search Console export (`--gsc`, optional) and 10-15 sub-queries from a model on OpenRouter (`FANOUT_MODEL`, `deepseek/deepseek-v4-pro` by default, about $0.0003 per hub, cached). Every sub-query is matched to the site's paragraphs: the hub answers it, a page it links to does, a page it does not link to does - a **link** - or nobody does - a **content gap**. See [Fan-out](#query-fan-out).
+- **Semantic phrases** (`run --semantic`): links to pages from paragraphs close to them in meaning, also when the text never names them.
+- Both find pages phrase matching cannot - nobody names them - and go through the same Jev judgement, thresholds and limits. Jev picks the link text among the paragraph's own phrases.
+- New: `fanout.csv`, `fanout_gaps.csv`, a *Fan-out* tab in the report and the panel (coverage per hub, sub-queries with filters, the links found), match types `fanout` / `semantic`, `passage_similarity` and `subquery` columns (at the end of the CSV files), paragraph embeddings cached in `passages.jsonl`.
+- `evaluate` measures fan-out and semantic pairs on their own (precision, AUC of `passage_similarity`) and keeps them out of the threshold search; `sample --anchor-type fanout` draws only them.
+- Phrase matching is unchanged: the benchmark gives the same 230 pairs and 90% precision.
+
+  First run on the hand-labelled 63-page blog (49 hubs, no Search Console data): 714 sub-queries - the hub answers 383, a page it links to 16, a page it does not link to 57, nobody 258; 29 new pairs judged, 6 more links (5 semantic, 1 fan-out), none of the phrase-matched links lost; $0.015 for the sub-queries and $0.003 for 1,558 paragraph embeddings. Not hand-labelled yet - check a sample before relying on them.
+
 ### 0.5.1 - 2026-10-11
 - **Cleaner phrases, fewer paid calls:**
   - a phrase never runs into a bracket or a quote ("indexing (does Google" → "indexing");
@@ -62,6 +72,7 @@ Full example: [`examples/report-krysmalski.pl.html`](examples/report-krysmalski.
 - **Links on text that is already there.** Most internal linking tools suggest "related pages" and leave it to you to find a spot, or write new sentences for you. This one only proposes a link where a matching phrase already exists, so you get the paragraph, the phrase and the target - nothing to rewrite.
 - **Judged, not guessed.** Jev answers closed questions with probabilities (is the passage on topic, is the phrase a natural anchor, would the link cannibalise the source page), so decisions come from thresholds you can measure and tune instead of from reading generated prose.
 - **Cheap enough for every site.** One Jev call per pair, cached between runs - a 50-page site costs about a cent.
+- **Questions, not just names.** With `--fanout` the tool asks which searches each important page should answer, finds the page that answers each, and proposes the missing links - and lists the questions nobody on the site answers.
 - **Safe defaults.** No links from headings, no duplicates of existing links, no phrases repeated like a template, same language only, at most 3 new links per page and 5 new links to one page.
 - **See the whole structure.** Page embeddings show how close two linked pages are in meaning, which pages are close but not linked, and how the site is linked today versus after the changes - as a graph you can click through.
 
@@ -115,6 +126,9 @@ internal-linking run --domain example.com --sources-file urls.txt        # only 
 internal-linking run --domain example.com --sources '^/blog/' --keywords services.csv   # blog → service pages on your phrases
 internal-linking run --domain example.com --keywords keywords.csv   # keyword mode, see below
 internal-linking run --domain example.com --no-embeddings   # skip page embeddings (no similarity, no topic map)
+internal-linking run --domain example.com --fanout --dry-run   # query fan-out: what it would cost (see Query fan-out)
+internal-linking run --domain example.com --fanout --gsc gsc.csv   # fan-out with your Search Console queries
+internal-linking run --domain example.com --semantic        # also links from paragraphs close in meaning
 internal-linking embed --domain example.com              # embed the saved pages and rebuild the report - no crawl, no Jev calls
 internal-linking report --domain example.com             # rebuild report.html from saved results - no crawl, no API calls
 internal-linking verify --domain example.com             # are the links inserted? (see Insert and verify)
@@ -130,12 +144,13 @@ Results land in `data/<domain>/` (change with `--data-dir`):
 - `run.json` - when the run was made and what it cost
 - `recommendations.csv` - every judged suggestion with its decision, reason and page similarity
 - `embeddings.jsonl` - one vector per page (cache)
+- with `--fanout`: `fanout.csv` (every sub-query of every hub, who answers it and what became of the link) and `fanout_gaps.csv` (the questions nobody on the site answers); `fanout.jsonl` and `passages.jsonl` are caches
 
 Jev answers (`jev_pairs.jsonl`) and page embeddings (`embeddings.jsonl`) are cached, so re-runs only pay for new or changed pairs and pages. Rough numbers: a 50-page site takes about a minute and about $0.01; downloading is the slow part on large sites (about 0.5 s per page), the phrase search takes seconds thanks to a word index. `--sources` / `--targets` (regexes on the URL path) and `--sources-file` / `--targets-file` (lists of URLs or paths) choose which pages get links and which pages links may point to - the whole site is still crawled, so e.g. blog posts can link to service pages. On a shop with thousands of products they also keep the number of Jev calls - and the cost - under control; check it first with `--dry-run`.
 
 ## Limitations
 
-- **Only phrases already in the text.** A page nobody mentions by name gets no links - write about it, or use keyword mode with your own phrases.
+- **Only text that is already there.** By default a link needs a phrase naming the target. `--fanout` and `--semantic` also find paragraphs that are about a page without naming it - but the link text is still a phrase from that paragraph; nothing is written for you. A page nobody writes about gets no links - the fan-out gaps say what to write.
 - **Polish and English.** Pages in other languages are skipped.
 - **A sitemap is required** (from robots.txt, `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`, or `--sitemap`); the crawler does not follow links. Sites are fetched over https.
 - **Content rendered by JavaScript is not seen** - only the HTML the server sends.
@@ -174,6 +189,32 @@ kitchen renovation,,partial
 - a plain text file with one keyword per line works too
 - the same safety rules and the Jev check apply; each keyword is linked at most once per page, with no site-wide limit
 - `keywords_summary.csv` and the table at the top of the report show, per keyword, where it was found, how many links it got and why the rest were rejected
+
+## Query fan-out
+
+![Fan-out tab: coverage per hub - the hub answers, a linked page answers, a page without a link answers, nobody answers](examples/fanout.png)
+
+Phrase matching only links a page where its name appears in the text, so the pages that need links most - the ones nobody mentions - get none. Fan-out starts from questions instead:
+
+1. **Hubs** - the content pages that are best linked today (not listings or archives, at least `min_words`), up to `--fanout-max` (100); or your choice: `--fanout-pages '^/blog/'` (a regex on the path) or `--fanout-pages-file hubs.txt` (URLs or paths).
+2. **Sub-queries** - for each hub, the real queries of that page from a Search Console export (`--gsc`, top 30 by impressions; optional) and 10-15 sub-queries from a model - the searches a person interested in the topic also makes: related subtopics, comparisons, costs, how-to steps, who it is for, local intent. Search Console queries come first; a generated one that means the same is merged into it.
+3. **Who answers** - every paragraph of the site gets an embedding (Qwen3 Embedding 8B, like the pages; the sub-queries are embedded as search queries). For each sub-query: *the hub answers it*, *a page the hub links to answers it*, *a page the hub does not link to answers it* → a link from the hub's paragraph closest to the question, or *nobody answers it* → a content gap.
+4. **Links** - Jev picks the link text among the phrases of 2-6 words in that paragraph (or none, when no phrase announces the target), then judges the pair like any other: same thresholds, one link per phrase, the per-page and per-target limits. They show as match type `fanout`, with the sub-query and the paragraph similarity.
+
+**Gaps are ideas, not a page list.** A question nobody on the site answers may deserve a section in the hub, a new article, or nothing. Writing a page for every variant of a query is what Google's guidelines warn against; the gaps are there to decide which questions your readers actually need answered.
+
+`--semantic` does the same without sub-queries: each page's name is matched to the paragraphs of other pages, so a page can get a link from text that is about it without naming it.
+
+**Search Console data** - a CSV with a page and a query column; clicks and impressions are used when present. Column names in English or Polish (`Page`/`URL`/`Strona`, `Query`/`Zapytanie`, `Clicks`/`Kliknięcia`, `Impressions`/`Wyświetlenia`), comma or semicolon separated. The export from the Search Console interface does **not** pair pages with queries (the *Queries* and *Pages* tabs are separate tables), so get it from:
+- [Search Analytics for Sheets](https://searchanalyticsforsheets.com/) - group by *Page* and *Query*, then *File → Download → CSV*,
+- the Search Console **bulk export to BigQuery** - the `searchdata_url_impression` table (`url`, `query`, `clicks`, `impressions`; daily rows are summed),
+- the Search Console API (`searchanalytics.query` with dimensions `page` and `query`).
+
+Without `--gsc` everything works on the generated sub-queries alone.
+
+**Cost** - one model call per hub (about $0.0003 with DeepSeek V4 Pro, $0.002 with Gemini 3.8 Flash; `FANOUT_MODEL` in `.env` picks any OpenRouter chat model with JSON output - the call goes to the cheapest provider that supports it, with reasoning off or at its minimum), the paragraph embeddings (about $0.002 per 1,000 paragraphs) and two Jev calls per link found (at most 6 per hub). A 60-page blog with every content page as a hub is a few cents. Everything is cached - in `fanout.jsonl`, `passages.jsonl` and `jev_anchors.jsonl` - so a second run pays only for what changed; `--dry-run` shows the count first.
+
+**Measured separately.** Fan-out and semantic links are new: `sample --anchor-type fanout` draws only them for labelling and `evaluate` reports their precision and the AUC of the paragraph similarity on their own, outside the threshold search. The thresholds that decide whether a paragraph answers a question (`fanout_answer_min`), when a generated query is a Search Console one (`fanout_merge_min`) and how close a paragraph must be for a semantic link (`semantic_min`) are in `config.json`.
 
 ## Embeddings and the link graph
 
@@ -220,6 +261,8 @@ src/internal_linking/
 ├── crawl.py          # sitemap, robots.txt, content blocks, existing links
 ├── anchors.py        # exact / partial phrase matching, language detection
 ├── embeddings.py     # page embeddings (Qwen3 Embedding 8B via OpenRouter), similarity, topic map, `embed` command
+├── passages.py       # paragraph embeddings, queries matched to paragraphs, phrases in a paragraph
+├── fanout.py         # query fan-out: hubs, Search Console import, sub-queries, coverage, semantic phrases
 ├── report.py         # interactive report.html with the Graph and Verification views, `report` command
 ├── agent.py          # links-for-agent.md for a coding agent
 ├── verify.py         # `verify`: are the links on the site

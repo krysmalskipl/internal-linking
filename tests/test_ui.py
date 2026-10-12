@@ -148,6 +148,14 @@ def test_only_listed_options_with_valid_values_reach_the_cli(ui):
     args = server.command_args("run", "example.pl", {"no_crawl": True, "dry_run": False, "max_links": "5", "sources": "^/blog/"})
     assert args == ["run", "--domain", "example.pl", "--no-crawl", "--max-links", "5", "--sources", "^/blog/"]
     assert server.command_args("verify", "example.pl", {"links": "latest"})[-2:] == ["--links", "latest"]
+    fan = server.command_args("run", "example.pl", {"fanout": True, "semantic": True, "fanout_pages": "^/blog/", "fanout_max": "20"})
+    assert fan == ["run", "--domain", "example.pl", "--fanout", "--semantic", "--fanout-pages", "^/blog/", "--fanout-max", "20"]
+    assert server.command_args("sample", "example.pl", {"anchor_type": "fanout"})[-2:] == ["--anchor-type", "fanout"]
+    for options in ({"fanout_pages": "(bad"}, {"fanout_max": "all"}, {"gsc": "../gsc.csv"}):
+        with pytest.raises(server.Problem):
+            server.command_args("run", "example.pl", options)
+    with pytest.raises(server.Problem):
+        server.command_args("sample", "example.pl", {"anchor_type": "--write-config"})
 
 
 def test_uploads_and_files_stay_inside_the_domain_folder(ui):

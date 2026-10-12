@@ -68,44 +68,53 @@ def request(texts: list[str], model: str, dims: int) -> tuple[list[list[float]],
     return [d["embedding"] for d in data], float((resp.get("usage") or {}).get("cost") or 0)
 
 
-def embed_pages(pages: list[dict], ddir: Path, workers: int = 4,
-                compute: bool = True) -> tuple[dict[str, np.ndarray], float]:
-    """URL → unit vector for every page, and the cost of the new ones. Only pages not in the
-    cache are sent; with compute=False nothing is sent and only cached vectors are returned."""
+def embed_texts(texts: dict[str, str], cache_path: Path, workers: int = 4, compute: bool = True,
+                unit_name: str = "pages") -> tuple[dict[str, np.ndarray], float]:
+    """name → unit vector for every text, and the cost of the new ones. Only texts not in the cache
+    are sent; with compute=False nothing is sent and only cached vectors are returned."""
     model, dims = settings()
-    cache_path = ddir / "embeddings.jsonl"
     cache = {r["key"]: r["vector"] for r in read_jsonl(cache_path)}
-    keys, texts = {}, {}
-    for p in pages:
-        text = page_text(p)
-        keys[p["url"]] = k = cache_key(text, model, dims)
-        texts.setdefault(k, (text, p["url"]))
-    todo = [k for k in texts if k not in cache] if compute else []
+    keys, todo_texts = {}, {}
+    for name, text in texts.items():
+        keys[name] = k = cache_key(text, model, dims)
+        todo_texts.setdefault(k, (text, name))
+    todo = [k for k in todo_texts if k not in cache] if compute else []
     cost = 0.0
     if todo:
         api_key()  # fail fast with a clear message when the key is missing
-        print(f"embedding {len(todo)} pages with {model} ({dims} dimensions, {len(texts) - len(todo)} cached)...")
+        print(f"embedding {len(todo)} {unit_name} with {model} ({dims} dimensions, {len(todo_texts) - len(todo)} cached)...")
         batches = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
-        progress = Progress("embedded", len(todo), "pages")
-        with closing(parallel(lambda b: request([texts[k][0] for k in b], model, dims), batches, workers)) as results:
+        progress = Progress("embedded", len(todo), unit_name)
+        with closing(parallel(lambda b: request([todo_texts[k][0] for k in b], model, dims), batches, workers)) as results:
             for batch, result, err in results:
                 if err is not None:
                     raise err  # the batches not sent yet are cancelled; the ones done stay cached
                 vectors, batch_cost = result
                 for k, v in zip(batch, vectors):
                     cache[k] = [round(float(x), 5) for x in unit(v, dims)]
-                    append_jsonl(cache_path, {"key": k, "url": texts[k][1], "model": model, "vector": cache[k]})
+                    append_jsonl(cache_path, {"key": k, "url": todo_texts[k][1], "model": model, "vector": cache[k]})
                 cost += batch_cost
                 progress.step(len(batch))
-        print(f"embeddings: {len(todo)} new pages, {len(texts) - len(todo)} cached, cost ${cost:.4f}")
-    return {url: unit(cache[k], dims) for url, k in keys.items() if k in cache}, cost
+        print(f"embeddings: {len(todo)} new {unit_name}, {len(todo_texts) - len(todo)} cached, cost ${cost:.4f}")
+    return {name: unit(cache[k], dims) for name, k in keys.items() if k in cache}, cost
+
+
+def count_new_texts(texts: list[str], cache_path: Path) -> int:
+    """Texts a run would send to the embeddings API (for --dry-run)."""
+    model, dims = settings()
+    cached = {r["key"] for r in read_jsonl(cache_path)}
+    return len({cache_key(t, model, dims) for t in texts} - cached)
+
+
+def embed_pages(pages: list[dict], ddir: Path, workers: int = 4,
+                compute: bool = True) -> tuple[dict[str, np.ndarray], float]:
+    """URL → unit vector for every page, and the cost of the new ones (cached in embeddings.jsonl)."""
+    return embed_texts({p["url"]: page_text(p) for p in pages}, ddir / "embeddings.jsonl", workers, compute)
 
 
 def count_new(pages: list[dict], ddir: Path) -> int:
     """Pages a run would send to the embeddings API (for --dry-run)."""
-    model, dims = settings()
-    cached = {r["key"] for r in read_jsonl(ddir / "embeddings.jsonl")}
-    return len({cache_key(page_text(p), model, dims) for p in pages} - cached)
+    return count_new_texts([page_text(p) for p in pages], ddir / "embeddings.jsonl")
 
 
 def similarity(vectors: dict[str, np.ndarray], a: str, b: str) -> float | None:

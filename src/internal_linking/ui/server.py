@@ -46,11 +46,14 @@ OPTIONS = {
             "dry_run": ("--dry-run", "flag"), "max_links": ("--max-links", "int"), "sources": ("--sources", "regex"),
             "targets": ("--targets", "regex"), "sources_file": ("--sources-file", "input"),
             "targets_file": ("--targets-file", "input"), "keywords": ("--keywords", "input"),
-            "sitemap": ("--sitemap", "url"), "delay": ("--delay", "float"), "workers": ("--workers", "int")},
+            "sitemap": ("--sitemap", "url"), "delay": ("--delay", "float"), "workers": ("--workers", "int"),
+            "fanout": ("--fanout", "flag"), "semantic": ("--semantic", "flag"), "gsc": ("--gsc", "input"),
+            "fanout_pages": ("--fanout-pages", "regex"), "fanout_pages_file": ("--fanout-pages-file", "input"),
+            "fanout_max": ("--fanout-max", "int")},
     "embed": {"workers": ("--workers", "int")},
     "report": {"max_links": ("--max-links", "int")},
     "verify": {"base_url": ("--base-url", "url"), "links": ("--links", "links"), "delay": ("--delay", "float")},
-    "sample": {"n": ("--n", "int")},
+    "sample": {"n": ("--n", "int"), "anchor_type": ("--anchor-type", "match")},
     "evaluate": {"target_precision": ("--target-precision", "float"), "write_config": ("--write-config", "flag")},
     "label": {"port": ("--port", "int")},
 }
@@ -58,7 +61,9 @@ OPTIONS = {
 CONFIG_FIELDS = {"score_min": ("float", 0, 1), "context_min": ("float", 0, 1), "anchor_min": ("float", 0, 1),
                  "cannibalisation_max": ("float", 0, 1), "similarity_min": ("float", 0, 1),
                  "template_share": ("float", 0, 1), "max_links_per_page": ("int", 1, 50), "max_links_per_target": ("int", 0, 30),
-                 "min_words": ("int", 0, 5000), "archive_patterns": ("regexes", 0, 0)}
+                 "min_words": ("int", 0, 5000), "archive_patterns": ("regexes", 0, 0),
+                 "fanout_answer_min": ("float", 0, 1), "fanout_merge_min": ("float", 0, 1), "semantic_min": ("float", 0, 1)}
+MATCH_TYPES = {"exact", "partial", "fanout", "semantic"}
 
 
 class Problem(Exception):
@@ -223,6 +228,8 @@ def command_args(command: str, domain: str, options: dict) -> list[str]:
             raise Problem(f"{name}: a whole number")
         if kind == "float" and not re.fullmatch(r"\d{1,4}(\.\d+)?", value):
             raise Problem(f"{name}: a number")
+        if kind == "match" and value not in MATCH_TYPES:
+            raise Problem(f"{name}: one of {', '.join(sorted(MATCH_TYPES))}")
         if kind == "url" and not re.fullmatch(r"https?://[^\s\"'<>]+", value):
             raise Problem(f"{name}: an http(s) address")
         if kind == "regex":
